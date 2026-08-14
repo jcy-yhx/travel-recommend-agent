@@ -1,0 +1,173 @@
+[
+  {
+    "name": "故宫博物院",
+    "city": "北京",
+    "category": "历史古迹",
+    "ticket": "60元",
+    "duration": "约4小时",
+    "description": "明清两代皇家宫殿，世界最大宫殿建筑群，需提前预约门票。",
+    "tips": "周一闭馆；建议上午早到避开人流"
+  },
+  {
+    "name": "天安门广场",
+    "city": "北京",
+    "category": "地标广场",
+    "ticket": "免费",
+    "duration": "约1小时",
+    "description": "世界上最大的城市广场，可参观人民英雄纪念碑，需安检进入。",
+    "tips": "进入需携带身份证并安检"
+  },
+  {
+    "name": "八达岭长城",
+    "city": "北京",
+    "category": "历史古迹",
+    "ticket": "40元",
+    "duration": "约4小时",
+    "description": "明长城精华段，距市区约70公里，可乘高铁或旅游专线前往。",
+    "tips": "建议早出发；春秋为最佳季节"
+  },
+  {
+    "name": "颐和园",
+    "city": "北京",
+    "category": "园林",
+    "ticket": "30元",
+    "duration": "约3小时",
+    "description": "清代皇家园林，以昆明湖和万寿山为核心，可乘船游览。",
+    "tips": "园区较大，穿舒适的鞋"
+  },
+  {
+    "name": "外滩",
+    "city": "上海",
+    "category": "地标街区",
+    "ticket": "免费",
+    "duration": "约2小时",
+    "description": "黄浦江畔万国建筑博览群，对岸陆家嘴天际线，夜景最佳。",
+    "tips": "夜晚灯光约19点亮起"
+  },
+  {
+    "name": "上海博物馆",
+    "city": "上海",
+    "category": "博物馆",
+    "ticket": "免费",
+    "duration": "约3小时",
+    "description": "青铜器、陶瓷、书画馆藏丰富，人民广场馆区需预约。",
+    "tips": "周一闭馆；需提前在公众号预约"
+  },
+  {
+    "name": "豫园",
+    "city": "上海",
+    "category": "园林",
+    "ticket": "40元",
+    "duration": "约2小时",
+    "description": "明代私家园林，毗邻城隍庙商圈，可顺路品尝南翔小笼。",
+    "tips": "节假日人流密集"
+  },
+  {
+    "name": "宽窄巷子",
+    "city": "成都",
+    "category": "历史街区",
+    "ticket": "免费",
+    "duration": "约2小时",
+    "description": "清代古街道，茶馆、小吃与手工艺品聚集，体验成都慢生活。",
+    "tips": "适合傍晚闲逛"
+  },
+  {
+    "name": "成都大熊猫繁育研究基地",
+    "city": "成都",
+    "category": "动物园",
+    "ticket": "55元",
+    "duration": "约3小时",
+    "description": "近距离观察大熊猫，清晨是熊猫活跃进食时段。",
+    "tips": "建议7:30开园就入场"
+  },
+  {
+    "name": "武侯祠",
+    "city": "成都",
+    "category": "历史古迹",
+    "ticket": "50元",
+    "duration": "约2小时",
+    "description": "纪念诸葛亮的祠庙，与锦里古街相邻。",
+    "tips": "可与锦里安排在同半天"
+  },
+  {
+    "name": "西湖",
+    "city": "杭州",
+    "category": "自然风光",
+    "ticket": "免费",
+    "duration": "约4小时",
+    "description": "世界文化遗产，苏堤、断桥、三潭印月环湖分布，可乘船游览。",
+    "tips": "清晨人少；游船约55元"
+  },
+  {
+    "name": "灵隐寺",
+    "city": "杭州",
+    "category": "寺庙",
+    "ticket": "75元",
+    "duration": "约2小时",
+    "description": "千年古刹，飞来峰造像群为全国重点文物。",
+    "tips": "含飞来峰门票；上午香客较多"
+  },
+  {
+    "name": "河坊街",
+    "city": "杭州",
+    "category": "历史街区",
+    "ticket": "免费",
+    "duration": "约2小时",
+    "description": "南宋御街遗址上的商业街，特产与小吃集中。",
+    "tips": "傍晚前往体验最佳"
+  },
+  {
+    "name": "秦始皇兵马俑博物馆",
+    "city": "西安",
+    "category": "博物馆",
+    "ticket": "120元",
+    "duration": "约3小时",
+    "description": "世界第八大奇迹，三个俑坑依次参观。",
+    "tips": "距市区约40公里，建议地铁+专线或跟团"
+  },
+  {
+    "name": "西安城墙",
+    "city": "西安",
+    "category": "历史古迹",
+    "ticket": "54元",
+    "duration": "约2小时",
+    "description": "保存最完整的古代城垣，可骑行环城（约13.7公里）。",
+    "tips": "黄昏登城，看落日与夜景"
+  },
+  {
+    "name": "回民街",
+    "city": "西安",
+    "category": "美食街区",
+    "ticket": "免费",
+    "duration": "约2小时",
+    "description": "西安小吃集中地：肉夹馍、羊肉泡馍、biangbiang面。",
+    "tips": "人流量大，注意保管财物"
+  },
+  {
+    "name": "大雁塔",
+    "city": "西安",
+    "category": "历史古迹",
+    "ticket": "50元",
+    "duration": "约2小时",
+    "description": "唐代玄奘译经之地，北广场有音乐喷泉表演。",
+    "tips": "喷泉表演一般在晚间"
+  },
+  {
+    "name": "广州塔",
+    "city": "广州",
+    "category": "地标建筑",
+    "ticket": "150元",
+    "duration": "约2小时",
+    "description": "600米高塔，俯瞰珠江新城与城市中轴线。",
+    "tips": "日落后登塔夜景更佳"
+  },
+  {
+    "name": "陈家祠",
+    "city": "广州",
+    "category": "历史古迹",
+    "ticket": "10元",
+    "duration": "约1.5小时",
+    "description": "岭南建筑艺术集大成者，木雕石雕砖雕三绝。",
+    "tips": "周一闭馆"
+  }
+]

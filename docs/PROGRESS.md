@@ -6,15 +6,15 @@
 
 ## 当前阶段
 
-Phase 01 — Structured Output（实现完成，学习文档已生成，待用户阅读确认）
+Phase 02 — Tool Calling（实现完成，学习文档已生成，待用户阅读确认）
 
 ## 阶段进度
 
 | Phase | 代码 | 测试 | 文档 | User Confirmation |
 |---|---|---|---|---|
 | Phase 00 项目理解与跑通 | ✅ P0+P1 修复完成 | ✅ smoke test 5/5 | ✅ 已生成（2026-08-15） | PASS |
-| Phase 01 Structured Output | ✅ JSON mode + zod + 重试 | ✅ 单测 7 个（共 12/12） | ✅ 已生成（2026-08-15） | PENDING |
-| Phase 02 Tool Calling | 未开始 | - | 模板 | PENDING |
+| Phase 01 Structured Output | ✅ JSON mode + zod + 重试 | ✅ 单测 7 个（共 12/12） | ✅ 已生成（2026-08-15） | PASS |
+| Phase 02 Tool Calling | ✅ 2 工具 + 强制 grounding + 双实例 | ✅ 单测 8 个（共 20/20） | ✅ 已生成（2026-08-15） | PENDING |
 | Phase 03 Agent Loop | 未开始 | - | 模板 | PENDING |
 | Phase 04 State / Memory | 未开始 | - | 模板 | PENDING |
 | Phase 05 RAG-lite | 未开始 | - | 模板 | PENDING |
@@ -27,7 +27,6 @@ Phase 01 — Structured Output（实现完成，学习文档已生成，待用�
 
 - [ ] P2：cors 全开，需收口 + rate limit（Phase 08 处理）
 - [ ] P2：nodemon 在 dependencies 而非 devDependencies
-- [ ] P2：docs/ 与 AGENT.md 尚未纳入 git（待用户要求 commit 时一并提交）
 - [ ] P2：仓库/目录/包名 "recomend" 拼写错误（建议改 "recommend"，改动大，可选）
 - [ ] P2：index.html 标题与 lang 还是脚手架模板值
 - [ ] P2：prompt 注入防护（city 直接拼进 prompt）——归 Phase 08 guardrails
@@ -46,3 +45,6 @@ Phase 01 — Structured Output（实现完成，学习文档已生成，待用�
 | 输出完全没有 JSON → 抛错触发重试 | 01 | ✅ 单测覆盖 |
 | 缺少 dailyItinerary 字段 → 校验失败触发重试 | 01 | ✅ 单测覆盖 |
 | ticket 为数字（schema 要求字符串）→ 校验失败触发重试 | 01 | ✅ 单测覆盖 |
+| 未知城市查天气 → 返回 error 字段不抛异常 | 02 | ✅ 单测覆盖 |
+| 未知工具名（模型幻觉）→ 回传 error ToolMessage | 02 | ✅ 单测覆盖 |
+| 景点检索无匹配 → 空结果 + 提示信息 | 02 | ✅ 单测覆盖 |

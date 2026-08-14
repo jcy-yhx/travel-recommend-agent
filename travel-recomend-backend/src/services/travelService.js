@@ -2,6 +2,7 @@ import { ChatOpenAI } from '@langchain/openai'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { extractJson } from '../utils/extractJson.js'
 import { TravelPlanSchema, summarizeZodError } from './travelPlanSchema.js'
+import { TOOLS, executeToolCall } from '../tools/index.js'
 
 // 结构化输出校验失败后的最大重试次数（不含首次调用）
 const MAX_RETRIES = 2
@@ -10,6 +11,7 @@ class TravelService {
     constructor() {
         this.llm = null
         this.structuredLlm = null
+        this.toolLlm = null
         this.initLLM()
     }
 
@@ -51,21 +53,64 @@ class TravelService {
             temperature: 0.2,
             modelKwargs: { response_format: { type: 'json_object' } }
         })
+
+        // 工具调用用 LLM：低温，但不带 JSON mode。
+        // 实测：response_format json_object 与 tool_choice required 在同一实例上
+        // 会冲突（提供方报错，LangChain 抛"reading 'message'"）。
+        // 因此工具调用轮次和最终 JSON 输出轮次各用各的实例。
+        this.toolLlm = new ChatOpenAI({
+            ...baseConfig,
+            temperature: 0.2
+        })
     }
 
     async recommend(city, budget, days) {
         // 参数校验已由路由层完成（HTTP 边界返回 400）
 
-        // 拿到提示词数据
-        const messages = [this.getTravelPrompt(city, budget, days)]
+        // 工具调用轮次：toolLlm（无 JSON mode）+ tool_choice=required 强制调用。
+        // 实测 auto 模式下模型倾向于跳过工具直接回答，行程数据来自参数记忆
+        // 而非工具资料。强制 grounding 保证规划基于真实资料——生产环境常见做法。
+        const llmForceTools = this.toolLlm.bindTools(TOOLS, { tool_choice: 'required' })
+        const messages = this.getTravelPrompt(city, budget, days)
+
+        // —— 工具调用阶段（本阶段一轮；Phase 03 升级为多轮循环）——
+        await this.runToolRound(messages, llmForceTools)
+
+        // —— 最终答案阶段：structuredLlm（JSON mode，不绑工具）——
+        // 不绑工具意味着模型无法再请求工具，只能给出最终 JSON（单轮边界）
+        messages.push(await this.structuredLlm.invoke(messages))
+        return await this.validatePlanWithRetries(messages)
+    }
+
+    // 一轮工具调用：模型返回 tool_calls → 逐个执行 → 结果回传
+    async runToolRound(messages, llmForceTools) {
+        const response = await llmForceTools.invoke(messages)
+        messages.push(response)
+
+        // 防御分支：个别模型/供应商可能不遵守 required
+        if (!response.tool_calls?.length) {
+            return
+        }
+
+        console.log(`模型发起 ${response.tool_calls.length} 次工具调用：`,
+            response.tool_calls.map(tc => `${tc.name}(${JSON.stringify(tc.args)})`).join(', '))
+
+        for (const toolCall of response.tool_calls) {
+            const toolMessage = await executeToolCall(toolCall)
+            console.log(`工具 ${toolCall.name} 执行结果：`, toolMessage.content.slice(0, 120))
+            messages.push(toolMessage)
+        }
+    }
+
+    // 结构化输出循环：校验 messages 中最后一条模型回答；失败则把错误反馈给模型重试
+    async validatePlanWithRetries(messages) {
         let lastError = null
 
-        // 结构化输出循环：调用 → 提取 → 校验；失败则把错误反馈给模型重试
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
-                const response = await this.structuredLlm.invoke(messages)
+                const last = messages[messages.length - 1]
                 // extractJson 返回的是字符串，需要 JSON.parse 转成对象再校验
-                const json = JSON.parse(extractJson(response.content))
+                const json = JSON.parse(extractJson(last.content))
                 return TravelPlanSchema.parse(json)
             } catch (error) {
                 lastError = error
@@ -77,6 +122,7 @@ class TravelService {
                     `你上一次的输出无法解析，错误信息：${reason}。` +
                     `请重新输出，必须严格符合要求的结构，且只输出 JSON 对象本身。`
                 ))
+                messages.push(await this.structuredLlm.invoke(messages))
             }
         }
 
@@ -85,8 +131,14 @@ class TravelService {
     }
 
     getTravelPrompt(city, budget, days){
-        return new HumanMessage(`你是一个专业的旅游规划师，擅长根据用户的需求生成详细的旅行行程。
-            请根据以下信息为用户生成一份详细的旅游规划：
+        return [
+            // 工具使用协议放在 SystemMessage：角色级指令对 tool calling 的
+            // 约束力远强于塞在用户消息里（实测：写在 HumanMessage 里模型经常跳过工具）
+            new SystemMessage(`你是专业的旅游规划师。规划前必须先调用工具获取真实资料：
+- 调用 get_weather 查询目的地天气
+- 调用 search_attractions 检索目的地景点
+然后基于工具返回的真实资料生成行程。`),
+            new HumanMessage(`请根据以下信息为用户生成一份详细的旅游规划：
             - 目的地城市：${city}
             - 预算：${budget}元
             - 旅行天数：${days}天
@@ -141,7 +193,8 @@ class TravelService {
             "warnings": ["注意事项1", "注意事项2"]
             }
 
-            重要：只输出 JSON 对象本身，不要输出任何解释性文字，不要用代码围栏包裹。`);
+            重要：只输出 JSON 对象本身，不要输出任何解释性文字，不要用代码围栏包裹。`)
+        ]
     }
 
     //流式对话
