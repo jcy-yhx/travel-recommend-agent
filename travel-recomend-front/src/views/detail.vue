@@ -14,7 +14,7 @@
                     <van-button type="primary" @click="fetchTripData">重新规划</van-button>
                 </van-empty>
             </div>
-            <template v-else-if="tripData && tripData.success !== false">
+            <template v-else-if="tripData">
                 <!-- 概览 -->
                 <div class="card overview-card">
                     <div class="trip-header">
@@ -96,7 +96,6 @@
     }
 
     interface TripData {
-        success: boolean
         city: string
         days: number
         totalBudget: number

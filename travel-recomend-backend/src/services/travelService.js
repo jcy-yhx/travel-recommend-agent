@@ -1,8 +1,15 @@
 import { ChatOpenAI } from '@langchain/openai'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
+import { extractJson } from '../utils/extractJson.js'
+import { TravelPlanSchema, summarizeZodError } from './travelPlanSchema.js'
+
+// 结构化输出校验失败后的最大重试次数（不含首次调用）
+const MAX_RETRIES = 2
+
 class TravelService {
     constructor() {
         this.llm = null
+        this.structuredLlm = null
         this.initLLM()
     }
 
@@ -17,18 +24,32 @@ class TravelService {
             throw new Error('不支持的模型提供程序')
         }
 
-        this.llm = new ChatOpenAI({
+        const baseConfig = {
             configuration: {
                 baseURL
             },
             apiKey,
             model,
-            temperature: 0.7,
-            streaming:true,
-            // 成本控制：限制单次回复最大 token 数
-            maxTokens: 4096,
             // 请求超时：防止 LLM 挂死时请求无限等待
-            timeout: 60000
+            timeout: 60000,
+            // 成本控制：限制单次回复最大 token 数
+            maxTokens: 4096
+        }
+
+        // 聊天用 LLM：较高温度，回答更自然
+        this.llm = new ChatOpenAI({
+            ...baseConfig,
+            temperature: 0.7,
+            streaming:true
+        })
+
+        // 结构化输出用 LLM：低温 + JSON mode
+        // - 低温（0.2）：降低随机性，更容易稳定复现结构
+        // - response_format: json_object：让模型只输出合法 JSON，从源头减少解析失败
+        this.structuredLlm = new ChatOpenAI({
+            ...baseConfig,
+            temperature: 0.2,
+            modelKwargs: { response_format: { type: 'json_object' } }
         })
     }
 
@@ -36,47 +57,31 @@ class TravelService {
         // 参数校验已由路由层完成（HTTP 边界返回 400）
 
         // 拿到提示词数据
-        const message = this.getTravelPrompt(city, budget, days)
+        const messages = [this.getTravelPrompt(city, budget, days)]
+        let lastError = null
 
-        try {
-            // 调用 LLM
-            const response = await this.llm.invoke([message])
-            // console.log(response)
-            const fullResponse = response.content
+        // 结构化输出循环：调用 → 提取 → 校验；失败则把错误反馈给模型重试
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                const response = await this.structuredLlm.invoke(messages)
+                // extractJson 返回的是字符串，需要 JSON.parse 转成对象再校验
+                const json = JSON.parse(extractJson(response.content))
+                return TravelPlanSchema.parse(json)
+            } catch (error) {
+                lastError = error
+                const reason = summarizeZodError(error) || error.message
+                console.error(`第 ${attempt + 1} 次结构化输出失败：${reason}`)
 
-            // console.log('LLM原始返回：')
-            // console.log(fullResponse)
-
-            // 提取 JSON
-            const match =
-                fullResponse.match(/```json\s*([\s\S]*?)\s*```/) ||
-                fullResponse.match(/```\s*([\s\S]*?)\s*```/) ||
-                fullResponse.match(/\{[\s\S]*\}/)
-
-            if (!match) {
-                throw new Error('模型输出格式错误')
-            }
-
-            // 有捕获组取 match[1]
-            // 没有捕获组取 match[0]
-            const jsonStr = match[1] || match[0]
-
-            // console.log('提取出来的JSON：')
-            // console.log(jsonStr)
-
-            const json = JSON.parse(jsonStr)
-
-            return json
-
-        } catch (error) {
-            console.error('JSON解析失败：', error)
-
-            return {
-                success: false,
-                error: 'JSON解析失败',
-                rawResponse: error.message
+                // 带反馈的重试：告诉模型上一次输出错在哪，而不是盲目重发同一请求
+                messages.push(new HumanMessage(
+                    `你上一次的输出无法解析，错误信息：${reason}。` +
+                    `请重新输出，必须严格符合要求的结构，且只输出 JSON 对象本身。`
+                ))
             }
         }
+
+        // 重试耗尽仍然失败：抛出异常，由全局错误中间件返回 500
+        throw new Error(`模型输出解析失败（已重试 ${MAX_RETRIES} 次）：${summarizeZodError(lastError) || lastError.message}`)
     }
 
     getTravelPrompt(city, budget, days){
@@ -95,7 +100,6 @@ class TravelService {
 
             请以JSON格式输出，结构如下：
             {
-            "success": true,
             "city": "城市名",
             "days": 天数,
             "totalBudget": 总预算,
@@ -105,22 +109,22 @@ class TravelService {
                 "date": "第1天",
                 "morning": {
                     "spot": "景点名称",
-                    "duration": "游览时长",
-                    "ticket": "门票价格",
+                    "duration": "游览时长（字符串，如\"约2小时\"）",
+                    "ticket": "门票价格（字符串，如\"60元\"或\"免费\"）",
                     "transportation": "交通方式",
                     "description": "景点介绍"
                 },
                 "afternoon": {
                     "spot": "景点名称",
-                    "duration": "游览时长",
-                    "ticket": "门票价格",
+                    "duration": "游览时长（字符串）",
+                    "ticket": "门票价格（字符串）",
                     "transportation": "交通方式",
                     "description": "景点介绍"
                 },
                 "evening": {
                     "spot": "活动名称",
-                    "duration": "活动时长",
-                    "ticket": "费用",
+                    "duration": "活动时长（字符串）",
+                    "ticket": "费用（字符串）",
                     "transportation": "交通方式",
                     "description": "活动介绍"
                 }
@@ -137,7 +141,7 @@ class TravelService {
             "warnings": ["注意事项1", "注意事项2"]
             }
 
-            请确保JSON格式正确，可以被解析。`);
+            重要：只输出 JSON 对象本身，不要输出任何解释性文字，不要用代码围栏包裹。`);
     }
 
     //流式对话
@@ -158,7 +162,6 @@ class TravelService {
                     continue
                 }
                 fullResponse += content
-                console.log(content)
                 if(streamCallback){
                     streamCallback(content)
                 }
@@ -172,7 +175,7 @@ class TravelService {
             return {
                 success: false,
                 error: error.message
-            } 
+            }
         }
 
     }

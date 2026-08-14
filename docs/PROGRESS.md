@@ -6,14 +6,14 @@
 
 ## 当前阶段
 
-Phase 00 — 项目理解与跑通（P0/P1 修复完成，学习文档已生成，待用户阅读确认）
+Phase 01 — Structured Output（实现完成，学习文档已生成，待用户阅读确认）
 
 ## 阶段进度
 
 | Phase | 代码 | 测试 | 文档 | User Confirmation |
 |---|---|---|---|---|
 | Phase 00 项目理解与跑通 | ✅ P0+P1 修复完成 | ✅ smoke test 5/5 | ✅ 已生成（2026-08-15） | PASS |
-| Phase 01 Structured Output | 未开始 | - | 模板 | PENDING |
+| Phase 01 Structured Output | ✅ JSON mode + zod + 重试 | ✅ 单测 7 个（共 12/12） | ✅ 已生成（2026-08-15） | PENDING |
 | Phase 02 Tool Calling | 未开始 | - | 模板 | PENDING |
 | Phase 03 Agent Loop | 未开始 | - | 模板 | PENDING |
 | Phase 04 State / Memory | 未开始 | - | 模板 | PENDING |
@@ -41,3 +41,8 @@ Phase 00 — 项目理解与跑通（P0/P1 修复完成，学习文档已生成�
 
 | 用例描述 | 所属 Phase | 状态 |
 |---|---|---|
+| 输出被 ```json 围栏包裹 → 提取成功 | 01 | ✅ 单测覆盖 |
+| JSON 前后有说明文字（无围栏）→ 提取成功 | 01 | ✅ 单测覆盖 |
+| 输出完全没有 JSON → 抛错触发重试 | 01 | ✅ 单测覆盖 |
+| 缺少 dailyItinerary 字段 → 校验失败触发重试 | 01 | ✅ 单测覆盖 |
+| ticket 为数字（schema 要求字符串）→ 校验失败触发重试 | 01 | ✅ 单测覆盖 |

@@ -32,16 +32,9 @@ router.post('/recommend', asyncHandler(async (req, res) => {
         })
     }
 
+    // service 返回的就是通过 schema 校验的行程数据；
+    // 校验重试耗尽仍失败时 service 抛异常，由全局错误中间件返回 500
     const response = await travelService.recommend(city, budgetNum, daysNum)
-
-    // service 内部会把 JSON 解析失败降级为 { success:false, ... }
-    // 这里用 500 表达"服务端未能完成任务"，保持单层契约：非 2xx 即失败
-    if (response.success === false) {
-        return res.status(500).json({
-            success:false,
-            message:'模型输出解析失败，请重试'
-        })
-    }
 
     return res.json({
         success:true,
