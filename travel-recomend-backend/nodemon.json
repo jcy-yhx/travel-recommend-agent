@@ -1,0 +1,11 @@
+{
+    "script": "node src/index.js",
+    "watch": ["src"],
+    "ext":"js,json",
+    "ignore": [
+        "node_modules",
+        "dist",
+        "public",
+        ".git"
+    ]
+}
