@@ -18,20 +18,22 @@ class TravelService {
         }
 
         this.llm = new ChatOpenAI({
-            configuration: { 
+            configuration: {
                 baseURL
             },
             apiKey,
             model,
             temperature: 0.7,
-            streaming:true
+            streaming:true,
+            // 成本控制：限制单次回复最大 token 数
+            maxTokens: 4096,
+            // 请求超时：防止 LLM 挂死时请求无限等待
+            timeout: 60000
         })
     }
 
     async recommend(city, budget, days) {
-        if (budget < 100 || days < 1 || days > 30) {
-            throw new Error('预算不能低于100元，天数必须在1-30天之间')
-        }
+        // 参数校验已由路由层完成（HTTP 边界返回 400）
 
         // 拿到提示词数据
         const message = this.getTravelPrompt(city, budget, days)

@@ -42,7 +42,6 @@
                     type="primary"
                     size="large"
                     round
-                    :loading="isLoading"
                     @click="handleSubmit"
                 >
                     开始规划
@@ -105,20 +104,18 @@ import {reactive, ref } from 'vue'
     '南京', '武汉', '苏州', '长沙', '天津', '郑州', '济南', '青岛',
     '大连', '沈阳', '哈尔滨', '长春', '福州', '厦门', '南昌', '合肥',
     '昆明', '贵阳', '南宁', '桂林', '海口', '三亚', '丽江', '大理',
-    '西安', '兰州', '乌鲁木齐', '拉萨', '呼和浩特', '太原', '石家庄'
+    '兰州', '乌鲁木齐', '拉萨', '呼和浩特', '太原', '石家庄'
     ]
 
     const popularCities = ['北京', '上海', '广州', '深圳', '成都', '杭州', '西安', '重庆',]
 
     const cityColumns = allCities.map( city => ({text:city,value:city}))
 
-    const onCityConfirm = ({ selectedOptions }) => {
-
-        formData.city = selectedOptions[0].value
+    const onCityConfirm = ({ selectedOptions }: { selectedOptions: Array<{ text?: string; value: string | number }> }) => {
+        formData.city = String(selectedOptions[0].value)
         showCityPicker.value = false
     }
 
-    const isLoading = ref(false)
     const handleSubmit = async () => {
 
         //判断目的地
@@ -138,7 +135,6 @@ import {reactive, ref } from 'vue'
             showToast('天数必须在1-30天之间')
             return
         }
-        isLoading.value = true
         router.push({
             path: '/detail',
             query: {
@@ -152,11 +148,11 @@ import {reactive, ref } from 'vue'
 
 
     // 跳转页面
-    const goPage = (path) => {
+    const goPage = (path: string) => {
         router.push(path)
     }
 
-    const selectedCity = (city) => {
+    const selectedCity = (city: string) => {
         formData.city = city
     }
 
