@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-Phase 02 — Tool Calling（实现完成，学习文档已生成，待用户阅读确认）
+Phase 03 — Agent Loop（实现完成，学习文档已生成，待用户阅读确认）
 
 ## 阶段进度
 
@@ -15,7 +15,7 @@ Phase 02 — Tool Calling（实现完成，学习文档已生成，待用户阅�
 | Phase 00 项目理解与跑通 | ✅ P0+P1 修复完成 | ✅ smoke test 5/5 | ✅ 已生成（2026-08-15） | PASS |
 | Phase 01 Structured Output | ✅ JSON mode + zod + 重试 | ✅ 单测 7 个（共 12/12） | ✅ 已生成（2026-08-15） | PASS |
 | Phase 02 Tool Calling | ✅ 2 工具 + 强制 grounding + 双实例 | ✅ 单测 8 个（共 20/20） | ✅ 已生成（2026-08-15） | PASS |
-| Phase 03 Agent Loop | 未开始 | - | 模板 | PENDING |
+| Phase 03 Agent Loop | ✅ 手写 loop + 双终止 + 检索预算 | ✅ 循环测试 3 个（共 23/23） | ✅ 已生成（2026-08-15） | PENDING |
 | Phase 04 State / Memory | 未开始 | - | 模板 | PENDING |
 | Phase 05 RAG-lite | 未开始 | - | 模板 | PENDING |
 | Phase 06 Planning / Reflection | 未开始 | - | 模板 | PENDING |
@@ -48,3 +48,5 @@ Phase 02 — Tool Calling（实现完成，学习文档已生成，待用户阅�
 | 未知城市查天气 → 返回 error 字段不抛异常 | 02 | ✅ 单测覆盖 |
 | 未知工具名（模型幻觉）→ 回传 error ToolMessage | 02 | ✅ 单测覆盖 |
 | 景点检索无匹配 → 空结果 + 提示信息 | 02 | ✅ 单测覆盖 |
+| 模型无限请求工具 → max_iter 兜底抛明确错误 | 03 | ✅ stub 测试 + 三亚真实实录 |
+| 工具失败后下一轮换参数重试并成功 | 03 | ✅ stub 测试 |

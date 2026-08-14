@@ -29,7 +29,14 @@ export const searchAttractions = tool(
             .slice(0, 5)
 
         if (scored.length === 0) {
-            return { query, results: [], message: '未找到匹配的景点，请尝试其他关键词' }
+            // 注意话术设计：不要写"请尝试其他关键词"——实测模型会反复换关键词
+            // 无限搜索（Agent Loop 靠 max_iter 兜底才停下来）。
+            // 正确引导：让模型优雅降级，用自身知识继续规划并标注不确定性。
+            return {
+                query,
+                results: [],
+                message: '知识库中未收录该目的地的景点。请不要反复更换关键词重试，直接基于你对目的地的了解规划行程，并在相应景点介绍中注明"信息可能过时，请以官方渠道为准"。'
+            }
         }
         return { query, results: scored.map(item => item.attraction) }
     },

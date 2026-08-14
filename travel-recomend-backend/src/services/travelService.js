@@ -6,6 +6,8 @@ import { TOOLS, executeToolCall } from '../tools/index.js'
 
 // 结构化输出校验失败后的最大重试次数（不含首次调用）
 const MAX_RETRIES = 2
+// Agent Loop 的最大迭代轮数（含第一轮强制工具调用）
+const MAX_AGENT_ITERATIONS = 5
 
 class TravelService {
     constructor() {
@@ -67,39 +69,57 @@ class TravelService {
     async recommend(city, budget, days) {
         // 参数校验已由路由层完成（HTTP 边界返回 400）
 
-        // 工具调用轮次：toolLlm（无 JSON mode）+ tool_choice=required 强制调用。
-        // 实测 auto 模式下模型倾向于跳过工具直接回答，行程数据来自参数记忆
-        // 而非工具资料。强制 grounding 保证规划基于真实资料——生产环境常见做法。
+        // 两个绑定工具的模式：
+        // - required：强制调用工具（第一轮用，保证 grounding——实测 auto 会偷懒）
+        // - auto：模型自己决定"继续调工具"还是"准备回答"（后续轮次用）
         const llmForceTools = this.toolLlm.bindTools(TOOLS, { tool_choice: 'required' })
+        const llmWithTools = this.toolLlm.bindTools(TOOLS)
         const messages = this.getTravelPrompt(city, budget, days)
 
-        // —— 工具调用阶段（本阶段一轮；Phase 03 升级为多轮循环）——
-        await this.runToolRound(messages, llmForceTools)
+        // —— Agent Loop：Tool Call → Tool Result → LLM → …… 直到模型停止请求工具 ——
+        await this.runAgentLoop(messages, llmForceTools, llmWithTools)
 
         // —— 最终答案阶段：structuredLlm（JSON mode，不绑工具）——
-        // 不绑工具意味着模型无法再请求工具，只能给出最终 JSON（单轮边界）
+        // 循环负责收集信息，答案轮负责格式可靠（Phase 01 的校验 + 重试原样保留）
         messages.push(await this.structuredLlm.invoke(messages))
         return await this.validatePlanWithRetries(messages)
     }
 
-    // 一轮工具调用：模型返回 tool_calls → 逐个执行 → 结果回传
-    async runToolRound(messages, llmForceTools) {
-        const response = await llmForceTools.invoke(messages)
+    // Agent Loop：模型反复"请求工具 → 拿到结果 → 再决策"，直到它停止请求工具。
+    // 终止条件有两个（互为保险）：
+    // 1. 模型返回不含 tool_calls 的回答（自主终止）
+    // 2. 达到 MAX_AGENT_ITERATIONS（防无限循环——模型陷入工具调用死循环时的兜底）
+    async runAgentLoop(messages, llmForceTools, llmWithTools) {
+        // 第一轮：required 强制 grounding，保证信息收集从工具开始
+        let response = await llmForceTools.invoke(messages)
         messages.push(response)
+        let iterations = 1
+        console.log(`[Agent Loop] 第 1 轮：${response.tool_calls?.length ?? 0} 次工具调用`,
+            response.tool_calls?.map(tc => tc.name).join(', ') || '（无）')
 
-        // 防御分支：个别模型/供应商可能不遵守 required
-        if (!response.tool_calls?.length) {
-            return
+        while (response.tool_calls?.length && iterations < MAX_AGENT_ITERATIONS) {
+            // 执行本轮所有工具调用，结果作为 ToolMessage 回写（失败也回写 error）
+            for (const toolCall of response.tool_calls) {
+                const toolMessage = await executeToolCall(toolCall)
+                console.log(`[Agent Loop] 工具 ${toolCall.name}(${JSON.stringify(toolCall.args)}) 执行结果：`,
+                    toolMessage.content.slice(0, 100))
+                messages.push(toolMessage)
+            }
+
+            // 下一轮：auto 模式，让模型基于工具结果自主决策——继续调工具，或停止
+            response = await llmWithTools.invoke(messages)
+            messages.push(response)
+            iterations++
+            console.log(`[Agent Loop] 第 ${iterations} 轮：${response.tool_calls?.length ?? 0} 次工具调用`,
+                response.tool_calls?.map(tc => tc.name).join(', ') || '（模型停止请求工具）')
         }
 
-        console.log(`模型发起 ${response.tool_calls.length} 次工具调用：`,
-            response.tool_calls.map(tc => `${tc.name}(${JSON.stringify(tc.args)})`).join(', '))
-
-        for (const toolCall of response.tool_calls) {
-            const toolMessage = await executeToolCall(toolCall)
-            console.log(`工具 ${toolCall.name} 执行结果：`, toolMessage.content.slice(0, 120))
-            messages.push(toolMessage)
+        // 兜底：达到最大轮数仍在请求工具 → 明确失败，而不是无限烧 token
+        if (response.tool_calls?.length) {
+            throw new Error(`Agent 达到最大迭代次数（${MAX_AGENT_ITERATIONS} 轮）仍未停止工具调用`)
         }
+        console.log(`[Agent Loop] 结束：共 ${iterations} 轮`)
+        return iterations
     }
 
     // 结构化输出循环：校验 messages 中最后一条模型回答；失败则把错误反馈给模型重试
@@ -135,9 +155,10 @@ class TravelService {
             // 工具使用协议放在 SystemMessage：角色级指令对 tool calling 的
             // 约束力远强于塞在用户消息里（实测：写在 HumanMessage 里模型经常跳过工具）
             new SystemMessage(`你是专业的旅游规划师。规划前必须先调用工具获取真实资料：
-- 调用 get_weather 查询目的地天气
-- 调用 search_attractions 检索目的地景点
-然后基于工具返回的真实资料生成行程。`),
+- 调用 get_weather 查询目的地天气（1 次即可）
+- 调用 search_attractions 检索目的地景点（1-2 次即可，信息足够就停止检索）
+然后基于工具返回的真实资料生成行程。
+约束：检索预算有限，不要反复搜索同一目的地；工具结果不完整时，用你的知识补充并注明不确定性。`),
             new HumanMessage(`请根据以下信息为用户生成一份详细的旅游规划：
             - 目的地城市：${city}
             - 预算：${budget}元
