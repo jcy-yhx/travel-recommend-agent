@@ -14,7 +14,7 @@ Phase 02 — Tool Calling（实现完成，学习文档已生成，待用户阅�
 |---|---|---|---|---|
 | Phase 00 项目理解与跑通 | ✅ P0+P1 修复完成 | ✅ smoke test 5/5 | ✅ 已生成（2026-08-15） | PASS |
 | Phase 01 Structured Output | ✅ JSON mode + zod + 重试 | ✅ 单测 7 个（共 12/12） | ✅ 已生成（2026-08-15） | PASS |
-| Phase 02 Tool Calling | ✅ 2 工具 + 强制 grounding + 双实例 | ✅ 单测 8 个（共 20/20） | ✅ 已生成（2026-08-15） | PENDING |
+| Phase 02 Tool Calling | ✅ 2 工具 + 强制 grounding + 双实例 | ✅ 单测 8 个（共 20/20） | ✅ 已生成（2026-08-15） | PASS |
 | Phase 03 Agent Loop | 未开始 | - | 模板 | PENDING |
 | Phase 04 State / Memory | 未开始 | - | 模板 | PENDING |
 | Phase 05 RAG-lite | 未开始 | - | 模板 | PENDING |
