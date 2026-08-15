@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-Phase 03 — Agent Loop（实现完成，学习文档已生成，待用户阅读确认）
+Phase 04 — State / Memory（实现完成，学习文档已生成，待用户阅读确认）
 
 ## 阶段进度
 
@@ -15,8 +15,8 @@ Phase 03 — Agent Loop（实现完成，学习文档已生成，待用户阅读
 | Phase 00 项目理解与跑通 | ✅ P0+P1 修复完成 | ✅ smoke test 5/5 | ✅ 已生成（2026-08-15） | PASS |
 | Phase 01 Structured Output | ✅ JSON mode + zod + 重试 | ✅ 单测 7 个（共 12/12） | ✅ 已生成（2026-08-15） | PASS |
 | Phase 02 Tool Calling | ✅ 2 工具 + 强制 grounding + 双实例 | ✅ 单测 8 个（共 20/20） | ✅ 已生成（2026-08-15） | PASS |
-| Phase 03 Agent Loop | ✅ 手写 loop + 双终止 + 检索预算 | ✅ 循环测试 3 个（共 23/23） | ✅ 已生成（2026-08-15） | PENDING |
-| Phase 04 State / Memory | 未开始 | - | 模板 | PENDING |
+| Phase 03 Agent Loop | ✅ 手写 loop + 双终止 + 检索预算 | ✅ 循环测试 3 个（共 23/23） | ✅ 已生成（2026-08-15） | PASS |
+| Phase 04 State / Memory | ✅ 会话状态 + 多轮记忆 + 持久化 | ✅ 状态测试 6 个（共 29/29） | ✅ 已生成（2026-08-15） | PENDING |
 | Phase 05 RAG-lite | 未开始 | - | 模板 | PENDING |
 | Phase 06 Planning / Reflection | 未开始 | - | 模板 | PENDING |
 | Phase 07 LangGraph | 未开始 | - | 模板 | PENDING |
@@ -50,3 +50,6 @@ Phase 03 — Agent Loop（实现完成，学习文档已生成，待用户阅读
 | 景点检索无匹配 → 空结果 + 提示信息 | 02 | ✅ 单测覆盖 |
 | 模型无限请求工具 → max_iter 兜底抛明确错误 | 03 | ✅ stub 测试 + 三亚真实实录 |
 | 工具失败后下一轮换参数重试并成功 | 03 | ✅ stub 测试 |
+| 同会话多轮对话记得"我叫小王" | 04 | ✅ 真实调用实录 |
+| 服务重启后会话状态从磁盘恢复 | 04 | ✅ 单测 + 真实调用实录 |
+| 行程草案被 chat 正确引用 | 04 | ✅ 真实调用实录 |

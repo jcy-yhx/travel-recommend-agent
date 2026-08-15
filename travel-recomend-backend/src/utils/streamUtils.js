@@ -19,9 +19,9 @@ export const createResponseStream = (res) => {
     return {
         //发送一个自定义事件（如 type:'chunk'）
         send: (data) => write(data),
-        //正常结束：发送 done 事件并关闭连接
-        done: () => {
-            write({ type: 'done' })
+        //正常结束：发送 done 事件并关闭连接（可携带附加数据，如 sessionId）
+        done: (data) => {
+            write({ type: 'done', ...data })
             res.end()
         },
         //异常结束：发送 error 事件并关闭连接

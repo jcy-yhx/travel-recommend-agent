@@ -15,6 +15,9 @@ build/
 .env.local
 .env.*.local
 
+# ========== 运行时数据（会话状态等） ==========
+travel-recomend-backend/src/data/sessions.json
+
 # ========== 日志 ==========
 logs/
 *.log

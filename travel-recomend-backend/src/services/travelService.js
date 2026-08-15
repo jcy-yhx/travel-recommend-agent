@@ -1,8 +1,9 @@
 import { ChatOpenAI } from '@langchain/openai'
-import { HumanMessage, SystemMessage } from '@langchain/core/messages'
+import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages'
 import { extractJson } from '../utils/extractJson.js'
 import { TravelPlanSchema, summarizeZodError } from './travelPlanSchema.js'
 import { TOOLS, executeToolCall } from '../tools/index.js'
+import { stateManager } from './stateManager.js'
 
 // 结构化输出校验失败后的最大重试次数（不含首次调用）
 const MAX_RETRIES = 2
@@ -66,7 +67,7 @@ class TravelService {
         })
     }
 
-    async recommend(city, budget, days) {
+    async recommend(city, budget, days, sessionId = null) {
         // 参数校验已由路由层完成（HTTP 边界返回 400）
 
         // 两个绑定工具的模式：
@@ -82,7 +83,13 @@ class TravelService {
         // —— 最终答案阶段：structuredLlm（JSON mode，不绑工具）——
         // 循环负责收集信息，答案轮负责格式可靠（Phase 01 的校验 + 重试原样保留）
         messages.push(await this.structuredLlm.invoke(messages))
-        return await this.validatePlanWithRetries(messages)
+        const plan = await this.validatePlanWithRetries(messages)
+
+        // 行程草案写入会话状态：之后 chat 可以引用"用户刚才规划的行程"
+        if (sessionId) {
+            stateManager.setTripPlan(sessionId, plan)
+        }
+        return plan
     }
 
     // Agent Loop：模型反复"请求工具 → 拿到结果 → 再决策"，直到它停止请求工具。
@@ -218,13 +225,19 @@ class TravelService {
         ]
     }
 
-    //流式对话
-    async chat(message, streamCallback) {
-        //组装参数
+    //流式对话（带会话状态：多轮记忆 + 行程草案上下文）
+    async chat(sessionId, message, streamCallback) {
+        const session = stateManager.getSession(sessionId)
+
+        // 组装消息：系统提示（含行程草案上下文）+ 会话历史 + 本轮新消息
         const messages = [
-            new SystemMessage('你是一个友好热情的旅游助手，请用中文回答用户关于旅游的所有的问题'),
+            new SystemMessage(this.buildChatSystemPrompt(session)),
+            ...(session?.history ?? []).map(m =>
+                m.role === 'user' ? new HumanMessage(m.content) : new AIMessage(m.content)
+            ),
             new HumanMessage(message)
         ]
+
         try {
             //调用大模型
             const stream = await this.llm.stream(messages)
@@ -240,6 +253,11 @@ class TravelService {
                     streamCallback(content)
                 }
             }
+
+            // 本轮对话写回会话状态（成功才写，失败不污染历史）
+            stateManager.appendMessage(sessionId, 'user', message)
+            stateManager.appendMessage(sessionId, 'assistant', fullResponse)
+
             return {
                 success: true,
                 response: fullResponse
@@ -252,6 +270,16 @@ class TravelService {
             }
         }
 
+    }
+
+    // 聊天系统提示：基础角色 + 行程草案上下文（如果有）
+    buildChatSystemPrompt(session) {
+        let prompt = '你是一个友好热情的旅游助手，请用中文回答用户关于旅游的所有的问题。'
+        if (session?.tripPlan) {
+            prompt += `\n用户当前的行程草案：${session.tripPlan.city} ${session.tripPlan.days} 天，总预算 ${session.tripPlan.totalBudget} 元。` +
+                `如果用户询问或修改行程，请基于该草案回答。`
+        }
+        return prompt
     }
 
 }

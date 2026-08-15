@@ -37,6 +37,10 @@
     const streaming = ref(false)
     const msgListEl = ref<HTMLElement | null>(null)
 
+    // 会话 ID：存在 localStorage，让同一浏览器里的所有请求共享一个会话
+    // （聊天多轮记忆 + 行程草案上下文都靠它关联）
+    const sessionId = localStorage.getItem('travel_session_id') || ''
+
     // 新消息（含流式追加）到来时滚动到底部
     watch(messages, async () => {
         await nextTick()
@@ -60,7 +64,7 @@
             const res = await fetch(`${BASE_URL}chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text })
+                body: JSON.stringify({ message: text, sessionId: sessionId || undefined })
             })
             if (!res.ok || !res.body) {
                 throw new Error(`请求失败（${res.status}）`)
@@ -85,8 +89,10 @@
                         assistantMsg.content += event.content
                     } else if (event.type === 'error') {
                         throw new Error(event.message || '对话失败')
+                    } else if (event.type === 'done' && event.sessionId) {
+                        // 服务端返回会话 ID，存下来供后续请求复用
+                        localStorage.setItem('travel_session_id', event.sessionId)
                     }
-                    // type === 'done' 时忽略，等流自然结束
                 }
             }
         } catch (error: any) {

@@ -135,13 +135,20 @@
         isLoading.value = true
         errMessage.value = ''
         try {
+            // 携带会话 ID：行程草案会关联到该会话，之后在 chat 页可以继续追问行程
+            const sessionId = localStorage.getItem('travel_session_id') || undefined
             const res = await post('recommend', {
                 city: formData.city,
                 budget: Number(formData.budget),
-                days: Number(formData.days)
+                days: Number(formData.days),
+                sessionId
             })
             if (res && res.success !== false) {
                 tripData.value = res.data
+                // 记住服务端返回的会话 ID（首次规划时服务端会新建）
+                if (res.sessionId) {
+                    localStorage.setItem('travel_session_id', res.sessionId)
+                }
             } else {
                 errMessage.value = res?.message || '接口调用失败'
                 tripData.value = null
