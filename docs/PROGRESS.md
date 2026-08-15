@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-Phase 08 — Eval & Hardening（实现完成，学习文档已生成，待用户阅读确认）
+Phase 09 — Interview Prep（交付物已生成，模拟面试进行中）
 
 ## 阶段进度
 
@@ -17,11 +17,11 @@ Phase 08 — Eval & Hardening（实现完成，学习文档已生成，待用户
 | Phase 02 Tool Calling | ✅ 2 工具 + 强制 grounding + 双实例 | ✅ 单测 8 个（共 20/20） | ✅ 已生成（2026-08-15） | PASS |
 | Phase 03 Agent Loop | ✅ 手写 loop + 双终止 + 检索预算 | ✅ 循环测试 3 个（共 23/23） | ✅ 已生成（2026-08-15） | PASS |
 | Phase 04 State / Memory | ✅ 会话状态 + 多轮记忆 + 持久化 | ✅ 状态测试 6 个（共 29/29） | ✅ 已生成（2026-08-15） | PASS |
-| Phase 05 RAG-lite | ✅ bge-m3 语义检索 + 阈值 + 兜底 | ✅ 单测 6 个（共 35/35）+ eval 8/8 | ✅ 已生成（2026-08-15） | PENDING |
-| Phase 06 Planning / Reflection | ✅ plan-then-execute + 校验 + re-plan | ✅ 测试 12 个（共 48/48） | ✅ 已生成（2026-08-15） | PENDING |
-| Phase 07 LangGraph | ✅ 8 节点图重写手写编排 | ✅ 旧测试 48/48 原样通过 | ✅ 已生成（2026-08-15） | PENDING |
-| Phase 08 Eval & Hardening | ✅ 三层 eval + LLM-judge + 硬化收口 | ✅ 53/53 + 端到端 6/6（judge 4.33） | ✅ 已生成（2026-08-15） | PENDING |
-| Phase 09 Interview Prep | 未开始 | - | 待创建 | PENDING |
+| Phase 05 RAG-lite | ✅ bge-m3 语义检索 + 阈值 + 兜底 | ✅ 单测 6 个（共 35/35）+ eval 8/8 | ✅ 已生成（2026-08-15） | PASS |
+| Phase 06 Planning / Reflection | ✅ plan-then-execute + 校验 + re-plan | ✅ 测试 12 个（共 48/48） | ✅ 已生成（2026-08-15） | PASS |
+| Phase 07 LangGraph | ✅ 8 节点图重写手写编排 | ✅ 旧测试 48/48 原样通过 | ✅ 已生成（2026-08-15） | PASS |
+| Phase 08 Eval & Hardening | ✅ 三层 eval + LLM-judge + 硬化收口 | ✅ 53/53 + 端到端 6/6（judge 4.33） | ✅ 已生成（2026-08-15） | PASS |
+| Phase 09 Interview Prep | ✅ README + 讲稿 + 题库 | 模拟面试 2 轮（进行中） | ✅ 已生成（2026-08-15） | PENDING |
 
 ## Backlog（越界发现，暂不处理）
 
