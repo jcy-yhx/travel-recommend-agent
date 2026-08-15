@@ -42,3 +42,16 @@ export function summarizeZodError(error) {
         .map(issue => `字段 "${issue.path.join('.')}" 校验失败：${issue.message}`)
         .join('；')
 }
+
+// 行程大纲 schema（Phase 06 plan-then-execute 的 plan 阶段）：
+// 比完整行程轻量——每天只有主题和景点名，先把"骨架"定下来
+export const PlanOutlineSchema = z.object({
+    city: z.string(),
+    days: z.number(),
+    totalBudget: z.number(),
+    dailyOutline: z.array(z.object({
+        day: z.number(),
+        theme: z.string(),
+        spots: z.array(z.string())
+    }))
+})

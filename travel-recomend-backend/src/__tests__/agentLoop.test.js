@@ -30,8 +30,17 @@ const validPlan = JSON.stringify({
 })
 
 // 构造一个 TravelService 并注入 stub LLM。
-// structuredLlm（答案轮）返回合法行程 JSON；
+// structuredLlm（答案阶段）区分两种调用：
+// - prompt 里带"大纲" → 返回行程大纲（Phase 06 planner 步骤）
+// - 其他 → 返回完整行程 JSON
 // toolLlm 的行为由 behavior 函数逐轮控制。
+const outlineJson = JSON.stringify({
+    city: '杭州',
+    days: 1,
+    totalBudget: 800,
+    dailyOutline: [{ day: 1, theme: '经典一日', spots: ['西湖'] }]
+})
+
 function makeServiceWithStub(toolLlmBehavior, answerLlmContent) {
     const service = new TravelService()
 
@@ -43,8 +52,12 @@ function makeServiceWithStub(toolLlmBehavior, answerLlmContent) {
 
     let answerCalls = 0
     service.structuredLlm = {
-        invoke: async () => {
+        invoke: async (messages) => {
             answerCalls++
+            const lastHuman = [...messages].reverse().find(m => m.constructor.name === 'HumanMessage')
+            if (lastHuman?.content?.includes('大纲')) {
+                return { content: outlineJson }
+            }
             return { content: answerLlmContent ?? validPlan }
         }
     }

@@ -1,9 +1,10 @@
 import { ChatOpenAI } from '@langchain/openai'
 import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages'
 import { extractJson } from '../utils/extractJson.js'
-import { TravelPlanSchema, summarizeZodError } from './travelPlanSchema.js'
+import { TravelPlanSchema, PlanOutlineSchema, summarizeZodError } from './travelPlanSchema.js'
 import { TOOLS, executeToolCall } from '../tools/index.js'
 import { stateManager } from './stateManager.js'
+import { validatePlan } from './planValidator.js'
 
 // 结构化输出校验失败后的最大重试次数（不含首次调用）
 const MAX_RETRIES = 2
@@ -80,16 +81,88 @@ class TravelService {
         // —— Agent Loop：Tool Call → Tool Result → LLM → …… 直到模型停止请求工具 ——
         await this.runAgentLoop(messages, llmForceTools, llmWithTools)
 
-        // —— 最终答案阶段：structuredLlm（JSON mode，不绑工具）——
-        // 循环负责收集信息，答案轮负责格式可靠（Phase 01 的校验 + 重试原样保留）
-        messages.push(await this.structuredLlm.invoke(messages))
-        const plan = await this.validatePlanWithRetries(messages)
+        // —— 答案阶段（Phase 06）：plan-then-execute + 校验 + 一次 re-plan ——
+        const plan = await this.generatePlanWithReflection(messages, { budget, days })
 
         // 行程草案写入会话状态：之后 chat 可以引用"用户刚才规划的行程"
         if (sessionId) {
             stateManager.setTripPlan(sessionId, plan)
         }
         return plan
+    }
+
+    // plan-then-execute + Reflection（克制版）：
+    // ① Planner：先出大纲（每天主题 + 景点 + 总预算），把"骨架"定下来
+    // ② Executor：按大纲展开为完整行程（Phase 01 的格式校验 + 重试原样保留）
+    // ③ Validator：语义校验（预算一致性/天数/明细求和，见 planValidator.js）
+    // ④ Reflection：校验失败 → 把错误反馈给模型 → re-plan 一次 → 仍失败则 500
+    async generatePlanWithReflection(messages, constraints) {
+        // ① Planner：大纲（失败不阻塞——跳过规划步骤直接展开，可降级）
+        const outlinePrompt = new HumanMessage(
+            `基于以上工具返回的真实资料，先输出一份行程大纲（不要细节），结构如下：` +
+            `{"city":"城市名","days":天数,"totalBudget":总预算,"dailyOutline":[{"day":1,"theme":"当日主题","spots":["景点1","景点2"]}]}。` +
+            `要求：总预算不得超过 ${constraints.budget} 元；只输出 JSON 对象本身。`
+        )
+        const outline = await this.generateOutline([...messages, outlinePrompt])
+        if (outline) {
+            messages.push(outlinePrompt)
+            messages.push(outline)
+            console.log(`[Planner] 行程大纲生成成功：${outline.content ? JSON.parse(extractJson(outline.content)).dailyOutline.length : '?'} 天`)
+        }
+
+        // ② Executor：按大纲展开完整行程
+        messages.push(new HumanMessage(
+            '现在把行程大纲展开为完整行程：每天的上午/下午/晚上安排（景点、时长、门票、交通、介绍），' +
+            '并给出预算分配明细。预算分配明细的合计必须与总预算一致。只输出 JSON 对象本身。'
+        ))
+        messages.push(await this.structuredLlm.invoke(messages))
+        const plan = await this.validatePlanWithRetries(messages)
+
+        // ③ Validator：语义校验（格式校验通过后才进入这层）
+        const result = validatePlan(constraints, plan)
+        if (result.valid) {
+            console.log('[Validator] 行程校验通过')
+            return plan
+        }
+        console.error('[Validator] 行程校验失败：', result.errors.join('；'))
+
+        // ④ Reflection：一次 re-plan——把校验错误反馈给模型重新生成
+        console.log('[Reflection] 触发 re-plan（1/1）')
+        messages.push(new HumanMessage(
+            `你生成的行程存在以下问题：${result.errors.join('；')}。` +
+            `请修正这些问题后重新输出完整的行程 JSON（结构与之前相同，只输出 JSON 对象本身）。`
+        ))
+        messages.push(await this.structuredLlm.invoke(messages))
+        const replanned = await this.validatePlanWithRetries(messages)
+
+        const result2 = validatePlan(constraints, replanned)
+        if (result2.valid) {
+            console.log('[Reflection] re-plan 修复成功')
+            return replanned
+        }
+        throw new Error(`行程校验失败（re-plan 后仍不通过）：${result2.errors.join('；')}`)
+    }
+
+    // 生成行程大纲：解析 + 校验，失败带反馈重试一次；仍失败返回 null（降级：跳过规划）
+    async generateOutline(messages) {
+        for (let attempt = 0; attempt <= 1; attempt++) {
+            try {
+                const response = await this.structuredLlm.invoke(messages)
+                const json = JSON.parse(extractJson(response.content))
+                PlanOutlineSchema.parse(json)
+                return response
+            } catch (error) {
+                const reason = summarizeZodError(error) || error.message
+                console.error(`[Planner] 大纲生成失败（第 ${attempt + 1} 次）：${reason}`)
+                if (attempt === 0) {
+                    messages.push(new HumanMessage(
+                        `你上一次输出的大纲无法解析，错误信息：${reason}。请重新输出大纲 JSON。`
+                    ))
+                }
+            }
+        }
+        console.warn('[Planner] 大纲连续失败，跳过规划步骤直接生成完整行程（降级）')
+        return null
     }
 
     // Agent Loop：模型反复"请求工具 → 拿到结果 → 再决策"，直到它停止请求工具。
