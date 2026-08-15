@@ -2,14 +2,11 @@ import { ChatOpenAI } from '@langchain/openai'
 import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages'
 import { extractJson } from '../utils/extractJson.js'
 import { TravelPlanSchema, PlanOutlineSchema, summarizeZodError } from './travelPlanSchema.js'
-import { TOOLS, executeToolCall } from '../tools/index.js'
 import { stateManager } from './stateManager.js'
-import { validatePlan } from './planValidator.js'
+import { createTravelAgentGraph } from '../graphs/travelAgentGraph.js'
 
 // 结构化输出校验失败后的最大重试次数（不含首次调用）
 const MAX_RETRIES = 2
-// Agent Loop 的最大迭代轮数（含第一轮强制工具调用）
-const MAX_AGENT_ITERATIONS = 5
 
 class TravelService {
     constructor() {
@@ -17,6 +14,10 @@ class TravelService {
         this.structuredLlm = null
         this.toolLlm = null
         this.initLLM()
+        // LangGraph 图：Phase 07 起 recommend 的编排由"手写循环"改为图结构。
+        // 节点在运行时通过 this.toolLlm / this.structuredLlm 访问 LLM，
+        // 因此测试仍可通过替换这些属性注入 stub。
+        this.graph = createTravelAgentGraph(this)
     }
 
     initLLM() {
@@ -71,76 +72,23 @@ class TravelService {
     async recommend(city, budget, days, sessionId = null) {
         // 参数校验已由路由层完成（HTTP 边界返回 400）
 
-        // 两个绑定工具的模式：
-        // - required：强制调用工具（第一轮用，保证 grounding——实测 auto 会偷懒）
-        // - auto：模型自己决定"继续调工具"还是"准备回答"（后续轮次用）
-        const llmForceTools = this.toolLlm.bindTools(TOOLS, { tool_choice: 'required' })
-        const llmWithTools = this.toolLlm.bindTools(TOOLS)
-        const messages = this.getTravelPrompt(city, budget, days)
+        // Phase 07 起：编排交给 LangGraph 图（agent→tools 循环 + planner→
+        // executor→validator + re-plan 条件边），service 只负责准备输入和收尾。
+        // 初始状态：消息 + 用户约束；图执行完拿 result.plan。
+        const result = await this.graph.invoke({
+            messages: this.getTravelPrompt(city, budget, days),
+            constraints: { budget, days },
+            agentIterations: 0,
+            replanCount: 0
+        })
 
-        // —— Agent Loop：Tool Call → Tool Result → LLM → …… 直到模型停止请求工具 ——
-        await this.runAgentLoop(messages, llmForceTools, llmWithTools)
-
-        // —— 答案阶段（Phase 06）：plan-then-execute + 校验 + 一次 re-plan ——
-        const plan = await this.generatePlanWithReflection(messages, { budget, days })
+        const plan = result.plan
 
         // 行程草案写入会话状态：之后 chat 可以引用"用户刚才规划的行程"
         if (sessionId) {
             stateManager.setTripPlan(sessionId, plan)
         }
         return plan
-    }
-
-    // plan-then-execute + Reflection（克制版）：
-    // ① Planner：先出大纲（每天主题 + 景点 + 总预算），把"骨架"定下来
-    // ② Executor：按大纲展开为完整行程（Phase 01 的格式校验 + 重试原样保留）
-    // ③ Validator：语义校验（预算一致性/天数/明细求和，见 planValidator.js）
-    // ④ Reflection：校验失败 → 把错误反馈给模型 → re-plan 一次 → 仍失败则 500
-    async generatePlanWithReflection(messages, constraints) {
-        // ① Planner：大纲（失败不阻塞——跳过规划步骤直接展开，可降级）
-        const outlinePrompt = new HumanMessage(
-            `基于以上工具返回的真实资料，先输出一份行程大纲（不要细节），结构如下：` +
-            `{"city":"城市名","days":天数,"totalBudget":总预算,"dailyOutline":[{"day":1,"theme":"当日主题","spots":["景点1","景点2"]}]}。` +
-            `要求：总预算不得超过 ${constraints.budget} 元；只输出 JSON 对象本身。`
-        )
-        const outline = await this.generateOutline([...messages, outlinePrompt])
-        if (outline) {
-            messages.push(outlinePrompt)
-            messages.push(outline)
-            console.log(`[Planner] 行程大纲生成成功：${outline.content ? JSON.parse(extractJson(outline.content)).dailyOutline.length : '?'} 天`)
-        }
-
-        // ② Executor：按大纲展开完整行程
-        messages.push(new HumanMessage(
-            '现在把行程大纲展开为完整行程：每天的上午/下午/晚上安排（景点、时长、门票、交通、介绍），' +
-            '并给出预算分配明细。预算分配明细的合计必须与总预算一致。只输出 JSON 对象本身。'
-        ))
-        messages.push(await this.structuredLlm.invoke(messages))
-        const plan = await this.validatePlanWithRetries(messages)
-
-        // ③ Validator：语义校验（格式校验通过后才进入这层）
-        const result = validatePlan(constraints, plan)
-        if (result.valid) {
-            console.log('[Validator] 行程校验通过')
-            return plan
-        }
-        console.error('[Validator] 行程校验失败：', result.errors.join('；'))
-
-        // ④ Reflection：一次 re-plan——把校验错误反馈给模型重新生成
-        console.log('[Reflection] 触发 re-plan（1/1）')
-        messages.push(new HumanMessage(
-            `你生成的行程存在以下问题：${result.errors.join('；')}。` +
-            `请修正这些问题后重新输出完整的行程 JSON（结构与之前相同，只输出 JSON 对象本身）。`
-        ))
-        messages.push(await this.structuredLlm.invoke(messages))
-        const replanned = await this.validatePlanWithRetries(messages)
-
-        const result2 = validatePlan(constraints, replanned)
-        if (result2.valid) {
-            console.log('[Reflection] re-plan 修复成功')
-            return replanned
-        }
-        throw new Error(`行程校验失败（re-plan 后仍不通过）：${result2.errors.join('；')}`)
     }
 
     // 生成行程大纲：解析 + 校验，失败带反馈重试一次；仍失败返回 null（降级：跳过规划）
@@ -163,43 +111,6 @@ class TravelService {
         }
         console.warn('[Planner] 大纲连续失败，跳过规划步骤直接生成完整行程（降级）')
         return null
-    }
-
-    // Agent Loop：模型反复"请求工具 → 拿到结果 → 再决策"，直到它停止请求工具。
-    // 终止条件有两个（互为保险）：
-    // 1. 模型返回不含 tool_calls 的回答（自主终止）
-    // 2. 达到 MAX_AGENT_ITERATIONS（防无限循环——模型陷入工具调用死循环时的兜底）
-    async runAgentLoop(messages, llmForceTools, llmWithTools) {
-        // 第一轮：required 强制 grounding，保证信息收集从工具开始
-        let response = await llmForceTools.invoke(messages)
-        messages.push(response)
-        let iterations = 1
-        console.log(`[Agent Loop] 第 1 轮：${response.tool_calls?.length ?? 0} 次工具调用`,
-            response.tool_calls?.map(tc => tc.name).join(', ') || '（无）')
-
-        while (response.tool_calls?.length && iterations < MAX_AGENT_ITERATIONS) {
-            // 执行本轮所有工具调用，结果作为 ToolMessage 回写（失败也回写 error）
-            for (const toolCall of response.tool_calls) {
-                const toolMessage = await executeToolCall(toolCall)
-                console.log(`[Agent Loop] 工具 ${toolCall.name}(${JSON.stringify(toolCall.args)}) 执行结果：`,
-                    toolMessage.content.slice(0, 100))
-                messages.push(toolMessage)
-            }
-
-            // 下一轮：auto 模式，让模型基于工具结果自主决策——继续调工具，或停止
-            response = await llmWithTools.invoke(messages)
-            messages.push(response)
-            iterations++
-            console.log(`[Agent Loop] 第 ${iterations} 轮：${response.tool_calls?.length ?? 0} 次工具调用`,
-                response.tool_calls?.map(tc => tc.name).join(', ') || '（模型停止请求工具）')
-        }
-
-        // 兜底：达到最大轮数仍在请求工具 → 明确失败，而不是无限烧 token
-        if (response.tool_calls?.length) {
-            throw new Error(`Agent 达到最大迭代次数（${MAX_AGENT_ITERATIONS} 轮）仍未停止工具调用`)
-        }
-        console.log(`[Agent Loop] 结束：共 ${iterations} 轮`)
-        return iterations
     }
 
     // 结构化输出循环：校验 messages 中最后一条模型回答；失败则把错误反馈给模型重试
