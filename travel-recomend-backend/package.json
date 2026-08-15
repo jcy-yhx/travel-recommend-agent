@@ -10,7 +10,8 @@
     "test": "node --test",
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "eval:retrieval": "node scripts/retrieval-eval.js"
+    "eval:retrieval": "node scripts/retrieval-eval.js",
+    "eval:e2e": "node scripts/run-eval.js"
   },
   "dependencies": {
     "@langchain/core": "^1.2.7",

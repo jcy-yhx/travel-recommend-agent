@@ -2,6 +2,7 @@ import { Annotation, StateGraph, START, END, messagesStateReducer } from '@langc
 import { HumanMessage, AIMessage } from '@langchain/core/messages'
 import { TOOLS, executeToolCall } from '../tools/index.js'
 import { validatePlan } from '../services/planValidator.js'
+import { logger } from '../utils/logger.js'
 
 // LangGraph 的 messagesStateReducer 要求增量消息是真正的 BaseMessage。
 // 真实 LLM 返回 AIMessage 没问题；测试 stub 常返回普通 {content} 对象，
@@ -46,7 +47,7 @@ export function createTravelAgentGraph(service) {
             : service.toolLlm.bindTools(TOOLS)
 
         const response = await llm.invoke(messages)
-        console.log(`[Graph/agent] 第 ${agentIterations + 1} 轮：${response.tool_calls?.length ?? 0} 次工具调用`,
+        logger.info(`[Graph/agent] 第 ${agentIterations + 1} 轮：${response.tool_calls?.length ?? 0} 次工具调用`,
             response.tool_calls?.map(tc => tc.name).join(', ') || '（模型停止请求工具）')
 
         return { messages: [toMessage(response)], agentIterations: agentIterations + 1 }
@@ -69,7 +70,7 @@ export function createTravelAgentGraph(service) {
         const toolMessages = []
         for (const toolCall of last.tool_calls) {
             const toolMessage = await executeToolCall(toolCall)
-            console.log(`[Graph/tools] ${toolCall.name}(${JSON.stringify(toolCall.args)}) 执行结果：`,
+            logger.info(`[Graph/tools] ${toolCall.name}(${JSON.stringify(toolCall.args)}) 执行结果：`,
                 toolMessage.content.slice(0, 100))
             toolMessages.push(toolMessage)
         }
@@ -86,10 +87,10 @@ export function createTravelAgentGraph(service) {
         )
         const outline = await service.generateOutline([...messages, outlinePrompt])
         if (!outline) {
-            console.warn('[Graph/planner] 大纲生成失败，降级跳过规划')
+            logger.warn('[Graph/planner] 大纲生成失败，降级跳过规划')
             return { messages: [outlinePrompt], outline: null }
         }
-        console.log('[Graph/planner] 行程大纲生成成功')
+        logger.info('[Graph/planner] 行程大纲生成成功')
         const outlineMessage = toMessage(outline)
         return { messages: [outlinePrompt, outlineMessage], outline: outlineMessage }
     }
@@ -119,10 +120,10 @@ export function createTravelAgentGraph(service) {
     function validatorNode(state) {
         const result = validatePlan(state.constraints, state.plan)
         if (result.valid) {
-            console.log('[Graph/validator] 行程校验通过')
+            logger.info('[Graph/validator] 行程校验通过')
             return { validationErrors: null }
         }
-        console.error('[Graph/validator] 行程校验失败：', result.errors.join('；'))
+        logger.error('[Graph/validator] 行程校验失败：', result.errors.join('；'))
         return { validationErrors: result.errors }
     }
 
@@ -136,7 +137,7 @@ export function createTravelAgentGraph(service) {
 
     // ⑥ re-plan 反馈节点：把校验错误拼成反馈消息，回流到 executor
     function replanFeedbackNode(state) {
-        console.log('[Graph/replan] 触发 re-plan（1/1）')
+        logger.info('[Graph/replan] 触发 re-plan（1/1）')
         return {
             messages: [new HumanMessage(
                 `你生成的行程存在以下问题：${state.validationErrors.join('；')}。` +

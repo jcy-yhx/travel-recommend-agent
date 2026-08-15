@@ -4,6 +4,8 @@ import { extractJson } from '../utils/extractJson.js'
 import { TravelPlanSchema, PlanOutlineSchema, summarizeZodError } from './travelPlanSchema.js'
 import { stateManager } from './stateManager.js'
 import { createTravelAgentGraph } from '../graphs/travelAgentGraph.js'
+import { sumMessagesUsage, estimateCost } from '../utils/tokenStats.js'
+import { logger } from '../utils/logger.js'
 
 // 结构化输出校验失败后的最大重试次数（不含首次调用）
 const MAX_RETRIES = 2
@@ -84,6 +86,11 @@ class TravelService {
 
         const plan = result.plan
 
+        // 成本观测：汇总本次请求全部 LLM 调用的 token 消耗
+        const usage = sumMessagesUsage(result.messages)
+        logger.info(`[Cost] 本次行程规划 token 消耗：输入 ${usage.inputTokens} + 输出 ${usage.outputTokens}` +
+            `，估算成本 ¥${estimateCost(usage).toFixed(4)}`)
+
         // 行程草案写入会话状态：之后 chat 可以引用"用户刚才规划的行程"
         if (sessionId) {
             stateManager.setTripPlan(sessionId, plan)
@@ -101,7 +108,7 @@ class TravelService {
                 return response
             } catch (error) {
                 const reason = summarizeZodError(error) || error.message
-                console.error(`[Planner] 大纲生成失败（第 ${attempt + 1} 次）：${reason}`)
+                logger.error(`[Planner] 大纲生成失败（第 ${attempt + 1} 次）：${reason}`)
                 if (attempt === 0) {
                     messages.push(new HumanMessage(
                         `你上一次输出的大纲无法解析，错误信息：${reason}。请重新输出大纲 JSON。`
@@ -109,7 +116,7 @@ class TravelService {
                 }
             }
         }
-        console.warn('[Planner] 大纲连续失败，跳过规划步骤直接生成完整行程（降级）')
+        logger.warn('[Planner] 大纲连续失败，跳过规划步骤直接生成完整行程（降级）')
         return null
     }
 
@@ -126,7 +133,7 @@ class TravelService {
             } catch (error) {
                 lastError = error
                 const reason = summarizeZodError(error) || error.message
-                console.error(`第 ${attempt + 1} 次结构化输出失败：${reason}`)
+                logger.error(`第 ${attempt + 1} 次结构化输出失败：${reason}`)
 
                 // 带反馈的重试：告诉模型上一次输出错在哪，而不是盲目重发同一请求
                 messages.push(new HumanMessage(
@@ -147,9 +154,11 @@ class TravelService {
             // 约束力远强于塞在用户消息里（实测：写在 HumanMessage 里模型经常跳过工具）
             new SystemMessage(`你是专业的旅游规划师。规划前必须先调用工具获取真实资料：
 - 调用 get_weather 查询目的地天气（1 次即可）
-- 调用 search_attractions 检索目的地景点（1-2 次即可，信息足够就停止检索）
+- 调用 search_attractions 检索目的地景点（最多 2 次）
 然后基于工具返回的真实资料生成行程。
-约束：检索预算有限，不要反复搜索同一目的地；工具结果不完整时，用你的知识补充并注明不确定性。`),
+硬性约束：search_attractions 调用达到 2 次后，即使信息不完整也必须停止搜索，
+基于已有资料和你的知识完成规划，并在相应景点介绍中注明不确定性。
+反复搜索同一目的地是禁止的——它会浪费预算且不带来新信息。`),
             new HumanMessage(`请根据以下信息为用户生成一份详细的旅游规划：
             - 目的地城市：${city}
             - 预算：${budget}元
@@ -247,7 +256,7 @@ class TravelService {
                 response: fullResponse
             }
         } catch (error) {
-            console.error('流式对话失败：', error)
+            logger.error('流式对话失败：', error)
             return {
                 success: false,
                 error: error.message
