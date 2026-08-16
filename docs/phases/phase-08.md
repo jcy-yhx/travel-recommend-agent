@@ -259,7 +259,15 @@ judge 在最终轮依然给出了有价值的批评（三亚公交路线描述�
 检查：Node 的 URL 相对路径按文件位置逐层解析，scripts/ → ../../ = 仓库根。
 收获：脚本产物路径要立即验证落点，否则评估记录会散落在仓库外。
 
-### 踩坑 4：流式调用的 token 统计拿不到
+### 踩坑 4：硬化引入的新崩溃——"进程级兜底"把日志管道断开升级成服务死亡
+
+现象（用户实测报障）：后端跑在 Claude Code 终端里，前端请求 recommend 报 `socket hang up`；直连 curl 心跳正常、recommend 必崩（进程死亡，nodemon 重启后再崩）。
+排查过程：① 干净环境起同样代码 → 不崩，怀疑环境差异；② 检查崩溃进程的环境变量，发现 `NODE_CHANNEL_FD=3`（Claude Code 会话的 IPC 管道）；③ 用 `node src/index.js | head -4` 模拟"管道先活后断"→ **完整复现**：心跳 OK（无日志）、recommend 的第一个日志写入抛 `Error: write EPIPE` → 被本阶段新加的 uncaughtException 兜底 → 按设计 `exit(1)` → 服务死亡。
+根因：日志写管道失败（无关紧要的问题）被进程级兜底升级成了服务崩溃（致命问题）。心跳没有日志所以不崩——这就是"心跳正常、recommend 必崩"的诡异现象来源。
+修法：logger 监听 `process.stdout/stderr` 的 `error` 事件吞掉 EPIPE——**日志失败不应杀死服务**。
+收获：① 进程级兜底是一把双刃剑——它会放大错误级别，每个进入兜底的异常都要问"这值得退出吗"；② "心跳正常但业务必崩"的排查思路：先对比两端的日志路径差异。
+
+### 踩坑 5：流式调用的 token 统计拿不到
 
 现象：chat 流式接口无法像 recommend 一样汇总 token。
 根因：OpenAI 兼容接口要在请求里带 `stream_options: {include_usage: true}` 才会在流里返回 usage，当前 SDK 版本没有暴露该选项。
