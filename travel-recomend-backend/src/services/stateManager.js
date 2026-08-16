@@ -1,8 +1,13 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { estimateCost } from '../utils/tokenStats.js'
 
-const DEFAULT_SESSIONS_FILE = new URL('../data/sessions.json', import.meta.url)
+// 会话持久化文件：默认 data/sessions.json；SESSIONS_FILE 环境变量可覆盖
+// （API 测试用它指向临时文件，避免污染运行时数据）
+const DEFAULT_SESSIONS_FILE = process.env.SESSIONS_FILE
+    ? resolve(process.env.SESSIONS_FILE)
+    : new URL('../data/sessions.json', import.meta.url)
 
 // 对话历史上限：只保留最近 N 条，防止上下文无限增长（token 成本线性上升）
 export const MAX_HISTORY = 20
@@ -82,7 +87,9 @@ export class StateManager {
         return session
     }
 
-    // 保存行程草案：让 chat 能引用"用户刚才规划的行程"
+    // 保存行程：Phase 11 起同时存完整 plan（不只是摘要）——
+    // refine 需要注入旧行程 JSON，detail 页恢复也不再重新生成。
+    // 旧的只存摘要的会话（Phase 11 前）自然降级：refine 返回 400，detail 重新生成。
     setTripPlan(sessionId, plan) {
         const session = this.sessions.get(sessionId)
         if (!session) return null
@@ -90,11 +97,39 @@ export class StateManager {
             city: plan.city,
             days: plan.days,
             totalBudget: plan.totalBudget,
+            plan,
             updatedAt: new Date().toISOString()
         }
         session.updatedAt = new Date().toISOString()
         this.persist()
         return session
+    }
+
+    // 会话列表：元数据 + 最近一条用户消息预览，按最近更新排序（profile 页列表）
+    listSessions() {
+        return [...this.sessions.values()]
+            .map(session => {
+                const lastUser = [...(session.history ?? [])].reverse().find(m => m.role === 'user')
+                return {
+                    sessionId: session.sessionId,
+                    createdAt: session.createdAt,
+                    updatedAt: session.updatedAt,
+                    messageCount: session.history?.length ?? 0,
+                    hasPlan: Boolean(session.tripPlan?.plan),
+                    city: session.tripPlan?.city ?? null,
+                    days: session.tripPlan?.days ?? null,
+                    totalBudget: session.tripPlan?.totalBudget ?? null,
+                    preview: lastUser ? lastUser.content.slice(0, 30) : ''
+                }
+            })
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    }
+
+    // 删除会话（含持久化）；返回是否真实删除了一个会话
+    deleteSession(sessionId) {
+        const existed = this.sessions.delete(sessionId)
+        if (existed) this.persist()
+        return existed
     }
 
     // 记录一次 LLM 规划请求的 token 用量（成本观测，Phase 08/10）

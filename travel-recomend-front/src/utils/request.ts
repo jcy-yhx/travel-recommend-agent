@@ -42,3 +42,7 @@ export function post(url: string, data?: unknown): Promise<any> {
 export function get(url: string, params?: unknown): Promise<any> {
     return request.get(url, {params}) as Promise<any>
 }
+
+export function del(url: string): Promise<any> {
+    return request.delete(url) as Promise<any>
+}

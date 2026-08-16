@@ -11,6 +11,62 @@ import { shapeNodeEvent } from '../utils/traceEvents.js'
 // 结构化输出校验失败后的最大重试次数（不含首次调用）
 const MAX_RETRIES = 2
 
+// 工具使用协议（SystemMessage 内容）：recommend 与 refine 共用同一份，
+// 避免两份 prompt 里的工具约束漂移（prompt 单一事实来源）
+const TOOL_PROTOCOL = `你是专业的旅游规划师。规划前必须先调用工具获取真实资料：
+- 调用 get_weather 查询目的地天气（1 次即可）
+- 调用 search_attractions 检索目的地景点（最多 2 次）
+然后基于工具返回的真实资料生成行程。
+硬性约束：search_attractions 调用达到 2 次后，即使信息不完整也必须停止搜索，
+基于已有资料和你的知识完成规划，并在相应景点介绍中注明不确定性。
+反复搜索同一目的地是禁止的——它会浪费预算且不带来新信息。`
+
+// 行程 JSON 结构模板（prompt 用）：recommend 与 refine 共用同一份，
+// 与 travelPlanSchema.js 的 zod schema 对应（一个约束模型、一个约束 prompt）
+const SCHEMA_SPEC = `{
+"city": "城市名",
+"days": 天数,
+"totalBudget": 总预算,
+"dailyItinerary": [
+    {
+    "day": 1,
+    "date": "第1天",
+    "morning": {
+        "spot": "景点名称",
+        "duration": "游览时长（字符串，如\"约2小时\"）",
+        "ticket": "门票价格（字符串，如60元或免费）",
+        "transportation": "交通方式",
+        "description": "景点介绍"
+    },
+    "afternoon": {
+        "spot": "景点名称",
+        "duration": "游览时长（字符串）",
+        "ticket": "门票价格（字符串）",
+        "transportation": "交通方式",
+        "description": "景点介绍"
+    },
+    "evening": {
+        "spot": "活动名称",
+        "duration": "活动时长（字符串）",
+        "ticket": "费用（字符串）",
+        "transportation": "交通方式",
+        "description": "活动介绍"
+    }
+    }
+],
+"budgetBreakdown": {
+    "accommodation": 住宿费用,
+    "food": 餐饮费用,
+    "transportation": 交通费用,
+    "tickets": 门票费用,
+    "other": 其他费用
+},
+"tips": ["提示1", "提示2", "提示3"],
+"warnings": ["注意事项1", "注意事项2"]
+}`
+
+const SCHEMA_OUTPUT_INSTRUCTION = '重要：只输出 JSON 对象本身，不要输出任何解释性文字，不要用代码围栏包裹。'
+
 class TravelService {
     constructor() {
         this.llm = null
@@ -100,19 +156,11 @@ class TravelService {
         return plan
     }
 
-    // 流式版 recommend（Phase 10）：用 graph.stream() 的 updates 模式
-    // 把每个节点的执行增量实时转发为轨迹事件。
-    // 与 recommend() 共用同一个图——graph.invoke 与 graph.stream 只是
-    // 同一个执行引擎的两种消费方式（53 个旧测试与 eval 脚本不受影响）。
-    async recommendStream(city, budget, days, sessionId = null, onEvent) {
-        const initialState = {
-            messages: this.getTravelPrompt(city, budget, days),
-            constraints: { budget, days },
-            agentIterations: 0,
-            replanCount: 0
-        }
-
-        // updates：节点级增量（轨迹事件）；values：完整状态（done 时算 usage）
+    // 图的流式执行（recommendStream 与 refine 共用）：updates 模式增量 →
+    // 轨迹事件；values 模式完整状态 → 结束后的 plan/usage 计算。
+    // 节点抛错（fail_max_iter / fail_validation）时 for-await 直接抛出，
+    // 由路由层转成 SSE error 事件——与 /chat 的错误模式一致
+    async streamGraph(initialState, onEvent) {
         const stream = await this.graph.stream(initialState, { streamMode: ['updates', 'values'] })
         let finalState = null
         let seq = 0
@@ -127,9 +175,21 @@ class TravelService {
                 finalState = chunk
             }
         }
+        return finalState
+    }
 
-        // 节点抛错（fail_max_iter / fail_validation）时 for-await 直接抛出，
-        // 由路由层转成 SSE error 事件——与 /chat 的错误模式一致
+    // 流式版 recommend（Phase 10）：用 graph.stream() 的 updates 模式
+    // 把每个节点的执行增量实时转发为轨迹事件。
+    // 与 recommend() 共用同一个图——graph.invoke 与 graph.stream 只是
+    // 同一个执行引擎的两种消费方式（53 个旧测试与 eval 脚本不受影响）。
+    async recommendStream(city, budget, days, sessionId = null, onEvent) {
+        const finalState = await this.streamGraph({
+            messages: this.getTravelPrompt(city, budget, days),
+            constraints: { budget, days },
+            agentIterations: 0,
+            replanCount: 0
+        }, onEvent)
+
         const plan = finalState?.plan
         const usage = sumMessagesUsage(finalState?.messages ?? [])
         logger.info(`[Cost] 本次行程规划 token 消耗：输入 ${usage.inputTokens} + 输出 ${usage.outputTokens}`)
@@ -138,6 +198,38 @@ class TravelService {
             stateManager.setTripPlan(sessionId, plan)
             stateManager.recordUsage(sessionId, 'recommend', usage)
         }
+        return { plan, usage }
+    }
+
+    // 修改行程（Phase 11）：用户对已有行程提出修改指令，重跑同一个图。
+    // 初始消息注入"旧行程 JSON + 修改指令"，走 agent→tools→planner→executor→
+    // validator 全链路——修改同样基于真实资料，而不是凭空改文本。
+    // 与 Phase 06 validator 触发的 re-plan 对称：一个是规则触发（自动），
+    // 一个是用户触发（交互），两者共用同一套图与收口逻辑。
+    async refine(sessionId, instruction, onEvent) {
+        const session = stateManager.getSession(sessionId)
+        // 只有完整行程才能修改；Phase 11 前的旧会话只有概要 → 明确报错
+        // （路由层已先校验返回 400，这里兜底 service 被直接调用的情况）
+        if (!session?.tripPlan?.plan) {
+            throw new Error('该会话没有可修改的行程（请先规划一次）')
+        }
+        const oldPlan = session.tripPlan.plan
+
+        const finalState = await this.streamGraph({
+            messages: this.getRefinePrompt(oldPlan, instruction),
+            // 约束取旧行程：天数不变；预算作为上限（用户可要求压缩预算）
+            constraints: { budget: oldPlan.totalBudget, days: oldPlan.days },
+            agentIterations: 0,
+            replanCount: 0
+        }, onEvent)
+
+        const plan = finalState?.plan
+        const usage = sumMessagesUsage(finalState?.messages ?? [])
+        logger.info(`[Cost] 修改行程 token 消耗：输入 ${usage.inputTokens} + 输出 ${usage.outputTokens}`)
+
+        // 新行程覆盖旧行程（同一会话只保留最新一份行程）
+        stateManager.setTripPlan(sessionId, plan)
+        stateManager.recordUsage(sessionId, 'refine', usage)
         return { plan, usage }
     }
 
@@ -195,13 +287,7 @@ class TravelService {
         return [
             // 工具使用协议放在 SystemMessage：角色级指令对 tool calling 的
             // 约束力远强于塞在用户消息里（实测：写在 HumanMessage 里模型经常跳过工具）
-            new SystemMessage(`你是专业的旅游规划师。规划前必须先调用工具获取真实资料：
-- 调用 get_weather 查询目的地天气（1 次即可）
-- 调用 search_attractions 检索目的地景点（最多 2 次）
-然后基于工具返回的真实资料生成行程。
-硬性约束：search_attractions 调用达到 2 次后，即使信息不完整也必须停止搜索，
-基于已有资料和你的知识完成规划，并在相应景点介绍中注明不确定性。
-反复搜索同一目的地是禁止的——它会浪费预算且不带来新信息。`),
+            new SystemMessage(TOOL_PROTOCOL),
             new HumanMessage(`请根据以下信息为用户生成一份详细的旅游规划：
             - 目的地城市：${city}
             - 预算：${budget}元
@@ -215,49 +301,31 @@ class TravelService {
             5. 注意事项
 
             请以JSON格式输出，结构如下：
-            {
-            "city": "城市名",
-            "days": 天数,
-            "totalBudget": 总预算,
-            "dailyItinerary": [
-                {
-                "day": 1,
-                "date": "第1天",
-                "morning": {
-                    "spot": "景点名称",
-                    "duration": "游览时长（字符串，如\"约2小时\"）",
-                    "ticket": "门票价格（字符串，如\"60元\"或\"免费\"）",
-                    "transportation": "交通方式",
-                    "description": "景点介绍"
-                },
-                "afternoon": {
-                    "spot": "景点名称",
-                    "duration": "游览时长（字符串）",
-                    "ticket": "门票价格（字符串）",
-                    "transportation": "交通方式",
-                    "description": "景点介绍"
-                },
-                "evening": {
-                    "spot": "活动名称",
-                    "duration": "活动时长（字符串）",
-                    "ticket": "费用（字符串）",
-                    "transportation": "交通方式",
-                    "description": "活动介绍"
-                }
-                }
-            ],
-            "budgetBreakdown": {
-                "accommodation": 住宿费用,
-                "food": 餐饮费用,
-                "transportation": 交通费用,
-                "tickets": 门票费用,
-                "other": 其他费用
-            },
-            "tips": ["提示1", "提示2", "提示3"],
-            "warnings": ["注意事项1", "注意事项2"]
-            }
+            ${SCHEMA_SPEC}
 
-            重要：只输出 JSON 对象本身，不要输出任何解释性文字，不要用代码围栏包裹。`)
+            ${SCHEMA_OUTPUT_INSTRUCTION}`)
+        ]
+    }
+
+    // 修改行程的初始消息（Phase 11）：工具协议 + 旧行程 JSON + 修改指令。
+    // 与 getTravelPrompt 共用 TOOL_PROTOCOL / SCHEMA_SPEC（prompt 单一事实来源）
+    getRefinePrompt(oldPlan, instruction) {
+        return [
+            new SystemMessage(TOOL_PROTOCOL),
+            new HumanMessage(`用户之前规划过以下行程：
+
+${JSON.stringify(oldPlan, null, 2)}
+
+用户希望这样修改：${instruction}
+
+请先调用工具重新获取${oldPlan.city}的真实资料（get_weather 1 次 + search_attractions 最多 2 次），
+然后在保留原行程合理部分的基础上落实修改要求，生成一份新的完整行程规划。
+约束：天数保持 ${oldPlan.days} 天不变；总预算不得超过 ${oldPlan.totalBudget} 元。
+
+请以JSON格式输出，结构如下：
+${SCHEMA_SPEC}
+
+${SCHEMA_OUTPUT_INSTRUCTION}`)
         ]
     }
 
@@ -308,12 +376,15 @@ class TravelService {
 
     }
 
-    // 聊天系统提示：基础角色 + 行程草案上下文（如果有）
+    // 聊天系统提示：基础角色 + 行程上下文（如果有）。
+    // chat 只负责"问"：用户询问行程细节时基于已有行程回答；
+    // "改"交给 detail 页的「修改行程」（/refine）——chat 不能改行程，只能指路。
     buildChatSystemPrompt(session) {
         let prompt = '你是一个友好热情的旅游助手，请用中文回答用户关于旅游的所有的问题。'
         if (session?.tripPlan) {
-            prompt += `\n用户当前的行程草案：${session.tripPlan.city} ${session.tripPlan.days} 天，总预算 ${session.tripPlan.totalBudget} 元。` +
-                `如果用户询问或修改行程，请基于该草案回答。`
+            prompt += `\n用户当前的行程：${session.tripPlan.city} ${session.tripPlan.days} 天，总预算 ${session.tripPlan.totalBudget} 元。` +
+                `用户询问行程细节时请基于该行程回答；` +
+                `如果用户想修改行程，请告诉他可以在行程详情页使用「修改行程」功能（你无法直接修改行程）。`
         }
         return prompt
     }

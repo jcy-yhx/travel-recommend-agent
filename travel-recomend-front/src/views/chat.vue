@@ -3,6 +3,14 @@
         <div class="page-header">
             <van-nav-bar title="AI 旅游助手" />
         </div>
+        <!-- 行程上下文横幅（Phase 11）：会话关联了行程时展示，点击去详情页 -->
+        <PlanContextBar
+            v-if="planContext"
+            :city="planContext.city"
+            :days="planContext.days"
+            :total-budget="planContext.totalBudget"
+            @view="router.push({ path: '/detail', query: { sessionId: sessionId } })"
+        />
         <div ref="msgListEl" class="page-content chat-content">
             <div v-for="(msg, index) in messages" :key="index" class="msg-row" :class="msg.role">
                 <div class="msg-bubble">{{ msg.content }}</div>
@@ -24,13 +32,19 @@
 </template>
 
 <script setup lang="ts">
-    import { nextTick, ref, watch } from 'vue'
+    import { nextTick, onMounted, ref, watch } from 'vue'
+    import { useRoute, useRouter } from 'vue-router'
     import { streamPost } from '../utils/sse'
+    import { get } from '../utils/request'
+    import PlanContextBar from '../components/PlanContextBar.vue'
 
     interface ChatMessage {
         role: 'user' | 'assistant'
         content: string
     }
+
+    const route = useRoute()
+    const router = useRouter()
 
     const messages = ref<ChatMessage[]>([])
     const inputText = ref('')
@@ -38,10 +52,48 @@
     const msgListEl = ref<HTMLElement | null>(null)
 
     // 会话 ID：存在 localStorage，让同一浏览器里的所有请求共享一个会话
-    // （聊天多轮记忆 + 行程草案上下文都靠它关联）
-    const sessionId = localStorage.getItem('travel_session_id') || ''
+    // （聊天多轮记忆 + 行程上下文都靠它关联）。
+    // URL 带 ?sessionId 时以 URL 为准（profile 会话列表跳转），并写回 localStorage
+    const sessionId = ref((route.query.sessionId as string) || localStorage.getItem('travel_session_id') || '')
 
-    // 新消息（含流式追加）到来时滚动到底部
+    // 会话关联的行程摘要（横幅展示）
+    const planContext = ref<{ city: string; days: number; totalBudget: number } | null>(null)
+
+    // 载入会话上下文：restore=1 时恢复历史消息；有行程则展示横幅
+    const loadSessionContext = async (sid: string, restore: boolean) => {
+        try {
+            const res = await get(`sessions/${sid}`)
+            const session = res?.data
+            if (!session?.sessionId) return
+            if (restore) {
+                messages.value = (session.history ?? []).map((m: any) => ({
+                    role: m.role,
+                    content: m.content
+                }))
+            }
+            if (session.tripPlan) {
+                planContext.value = {
+                    city: session.tripPlan.city,
+                    days: session.tripPlan.days,
+                    totalBudget: session.tripPlan.totalBudget
+                }
+            }
+        } catch {
+            // 会话不存在（本地 ID 过期）或 404：静默忽略，正常使用
+        }
+    }
+
+    onMounted(() => {
+        const urlSid = route.query.sessionId as string
+        if (urlSid) {
+            localStorage.setItem('travel_session_id', urlSid)
+        }
+        if (sessionId.value) {
+            loadSessionContext(sessionId.value, Boolean(urlSid && route.query.restore === '1'))
+        }
+    })
+
+    // 新消息（含流式追加、历史恢复）到来时滚动到底部
     watch(messages, async () => {
         await nextTick()
         msgListEl.value?.scrollTo({ top: msgListEl.value.scrollHeight })
@@ -61,7 +113,7 @@
 
         try {
             // 通用 SSE 消费（utils/sse.ts）：chunk 追加 / done 存会话 ID / error 抛错
-            await streamPost('chat', { message: text, sessionId: sessionId || undefined }, (event) => {
+            await streamPost('chat', { message: text, sessionId: sessionId.value || undefined }, (event) => {
                 if (event.type === 'chunk') {
                     assistantMsg.content += event.content
                 } else if (event.type === 'error') {

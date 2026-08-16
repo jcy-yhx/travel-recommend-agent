@@ -4,19 +4,21 @@
             <van-nav-bar fixed left-text="返回" left-arrow @click-left="onBack" :title="formData.city ? formData.city + '行程规划' : '行程规划'"/>
         </div>
         <div class="page-content">
-            <!-- 生成过程：Agent 执行轨迹实时可见（面试展示主场景） -->
+            <!-- 生成/修改过程：Agent 执行轨迹实时可见（面试展示主场景） -->
             <TracePanel v-if="traceRunning || traceEvents.length" :events="traceEvents" :running="traceRunning" />
-            <div v-if="traceRunning && !traceEvents.length" class="loading-container">
+            <div v-if="traceRunning && !traceEvents.length && !tripData" class="loading-container">
                 <van-loading size="48px" type="spinner">
                     正在启动 Agent...
                 </van-loading>
             </div>
-            <div v-else-if="errMessage" class="error-container">
+            <!-- 错误卡片独立 v-if（不挂在 v-else-if 链上）：
+                 修改行程失败时旧行程仍可看，错误在上方提示 -->
+            <div v-if="errMessage" class="error-container">
                 <van-empty :description="errMessage" >
                     <van-button type="primary" @click="fetchTripData">重新规划</van-button>
                 </van-empty>
             </div>
-            <template v-else-if="tripData">
+            <template v-if="tripData">
                 <!-- 概览 -->
                 <div class="card overview-card">
                     <div class="trip-header">
@@ -85,6 +87,44 @@
                 </div>
             </template>
         </div>
+
+        <!-- 底部操作栏（Phase 11）：追问（chat 只回答）vs 修改（refine 重跑图） -->
+        <div v-if="tripData" class="detail-footer">
+            <van-button plain type="primary" @click="goChat">追问行程</van-button>
+            <van-button type="primary" :disabled="refineRunning" @click="showRefine = true">修改行程</van-button>
+        </div>
+
+        <!-- 修改行程指令输入（Phase 11）：快捷模板 + 自由输入，走 /refine 重跑图 -->
+        <van-action-sheet v-model:show="showRefine" title="修改行程">
+            <div class="refine-sheet">
+                <div class="refine-templates">
+                    <span class="refine-templates-label">快捷指令：</span>
+                    <van-tag
+                        v-for="t in REFINE_TEMPLATES"
+                        :key="t"
+                        class="refine-tag"
+                        plain
+                        type="primary"
+                        size="medium"
+                        @click="refineText = t"
+                    >{{ t }}</van-tag>
+                </div>
+                <van-field
+                    v-model="refineText"
+                    rows="2"
+                    autosize
+                    type="textarea"
+                    maxlength="200"
+                    show-word-limit
+                    placeholder="描述你想怎么改，例如：把第二天改成西湖"
+                />
+                <div class="refine-submit">
+                    <van-button type="primary" block :loading="refineRunning" :disabled="!refineText.trim()" @click="submitRefine">
+                        开始修改（重新规划）
+                    </van-button>
+                </div>
+            </div>
+        </van-action-sheet>
     </div>
 
 </template>
@@ -93,6 +133,7 @@
     import { onMounted, reactive, ref } from 'vue';
     import { useRouter, useRoute } from 'vue-router';
     import { streamPost } from '../utils/sse'
+    import { get } from '../utils/request'
     import TracePanel from '../components/TracePanel.vue'
 
     // 与后端 prompt 中约定的 JSON 结构保持一致
@@ -140,26 +181,38 @@
     const traceRunning = ref(false)
     const usage = ref<{ inputTokens: number; outputTokens: number; estimatedCost: number } | null>(null)
 
+    // 会话 ID：localStorage 与 URL（?sessionId）共用一套，
+    // 规划/修改都携带它，行程才会关联到同一个会话
+    const sessionId = ref((route.query.sessionId as string) || localStorage.getItem('travel_session_id') || '')
+
+    // 修改行程（Phase 11）：指令弹层状态
+    const showRefine = ref(false)
+    const refineText = ref('')
+    const refineRunning = ref(false)
+    // 快捷模板：全部遵守后端 refine 约束（天数不变、预算只降不升）
+    const REFINE_TEMPLATES = ['把第二天改成西湖', '把预算压缩 20%', '增加一个夜游项目']
+
     const formData = reactive({
         city: '',
         budget: null as number | null,
         days: null as number | null
     })
 
+    // 流式结束（done / error）时轨迹已完成使命：
+    // 清空事件列表，时间线替换为行程卡片（phase-10.md 的设计：done 替换为行程）
     const fetchTripData = async () => {
         isLoading.value = true
         errMessage.value = ''
         traceEvents.value = []
         usage.value = null
         try {
-            // 流式规划：Agent 执行轨迹实时推送（携带会话 ID 关联行程草案）
-            const sessionId = localStorage.getItem('travel_session_id') || undefined
+            // 流式规划：Agent 执行轨迹实时推送（携带会话 ID 关联行程）
             traceRunning.value = true
             await streamPost('recommend/stream', {
                 city: formData.city,
                 budget: Number(formData.budget),
                 days: Number(formData.days),
-                sessionId
+                sessionId: sessionId.value || undefined
             }, (event) => {
                 if (event.type === 'node') {
                     traceEvents.value.push(event as TraceEvent)
@@ -167,8 +220,10 @@
                     tripData.value = event.plan
                     usage.value = event.usage ?? null
                     if (event.sessionId) {
+                        sessionId.value = event.sessionId
                         localStorage.setItem('travel_session_id', event.sessionId)
                     }
+                    traceEvents.value = []
                 } else if (event.type === 'error') {
                     throw new Error(event.message || '规划失败')
                 }
@@ -187,12 +242,87 @@
         }
     }
 
+    // 提交修改指令：与规划共用同一条流式链路（轨迹面板重放 → done 替换行程）
+    const submitRefine = async () => {
+        const instruction = refineText.value.trim()
+        if (!instruction || refineRunning.value) return
+        if (!sessionId.value) {
+            errMessage.value = '缺少会话信息，请先规划一次行程'
+            return
+        }
+
+        showRefine.value = false
+        refineRunning.value = true
+        errMessage.value = ''
+        traceEvents.value = []
+        usage.value = null
+        try {
+            traceRunning.value = true
+            await streamPost('refine', {
+                sessionId: sessionId.value,
+                instruction
+            }, (event) => {
+                if (event.type === 'node') {
+                    traceEvents.value.push(event as TraceEvent)
+                } else if (event.type === 'done') {
+                    tripData.value = event.plan
+                    usage.value = event.usage ?? null
+                    traceEvents.value = []
+                } else if (event.type === 'error') {
+                    throw new Error(event.message || '修改失败')
+                }
+            })
+        } catch (error: any) {
+            console.error('修改行程失败:', error)
+            errMessage.value = error.message || '修改失败'
+            // 修改失败：旧行程仍保留展示（tripData 不动）
+        } finally {
+            traceRunning.value = false
+            refineRunning.value = false
+            refineText.value = ''
+        }
+    }
+
+    // 追问行程：跳 chat（同会话，横幅展示当前行程；chat 只回答、不修改）
+    const goChat = () => {
+        router.push({ path: '/chat' })
+    }
+
+    // 从会话恢复行程（profile/chat 跳转入口）：
+    // 有完整行程直接展示；Phase 11 前的旧会话只有概要 → 按概要重新生成
+    const restoreFromSession = async (sid: string) => {
+        try {
+            const res = await get(`sessions/${sid}`)
+            const session = res?.data
+            if (!session?.tripPlan) {
+                errMessage.value = '该会话没有行程记录'
+                return
+            }
+            if (session.tripPlan.plan) {
+                tripData.value = session.tripPlan.plan
+                sessionId.value = sid
+                localStorage.setItem('travel_session_id', sid)
+            } else {
+                formData.city = session.tripPlan.city
+                formData.budget = session.tripPlan.totalBudget
+                formData.days = session.tripPlan.days
+                fetchTripData()
+            }
+        } catch (error: any) {
+            console.error('会话恢复失败:', error)
+            errMessage.value = error.message || '会话加载失败'
+        }
+    }
+
     onMounted(() => {
         formData.city = (route.query.city as string) || ''
         formData.budget = route.query.budget ? Number(route.query.budget) : null
         formData.days = route.query.days ? Number(route.query.days) : null
         if (formData.city && formData.budget && formData.days) {
             fetchTripData()
+        } else if (route.query.sessionId) {
+            // 无规划参数、带 sessionId：从会话恢复行程（无 plan 则按概要重新生成）
+            restoreFromSession(route.query.sessionId as string)
         }
     })
 
@@ -337,11 +467,44 @@
     bottom: 0;
     left: 0;
     right: 0;
+    display: flex;
+    gap: 12px;
     padding: 12px 16px;
     background: #fff;
     box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
     max-width: 750px;
     margin: 0 auto;
+    }
+
+    .detail-footer .van-button {
+    flex: 1;
+    }
+
+    .refine-sheet {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    }
+
+    .refine-templates {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    }
+
+    .refine-templates-label {
+    font-size: 13px;
+    color: #646566;
+    }
+
+    .refine-tag {
+    cursor: pointer;
+    }
+
+    .refine-submit {
+    padding-bottom: 8px;
     }
 
     .error-card {

@@ -82,6 +82,69 @@ router.get('/stats', asyncHandler(async (req, res) => {
     })
 }))
 
+// 会话列表（Phase 11）：元数据 + 最近一条用户消息预览，按最近更新排序
+router.get('/sessions', asyncHandler(async (req, res) => {
+    return res.json({
+        success: true,
+        data: stateManager.listSessions()
+    })
+}))
+
+// 会话详情（Phase 11）：chat 恢复历史 / detail 恢复行程都从这里取
+router.get('/sessions/:id', asyncHandler(async (req, res) => {
+    const session = stateManager.getSession(req.params.id)
+    if (!session) {
+        return res.status(404).json({ success: false, message: '会话不存在' })
+    }
+    return res.json({
+        success: true,
+        data: session
+    })
+}))
+
+// 删除会话（Phase 11）：幂等语义——不存在的会话返回 404
+router.delete('/sessions/:id', asyncHandler(async (req, res) => {
+    const existed = stateManager.deleteSession(req.params.id)
+    if (!existed) {
+        return res.status(404).json({ success: false, message: '会话不存在' })
+    }
+    return res.json({ success: true })
+}))
+
+// 修改行程（Phase 11）：注入旧行程 + 修改指令重跑同一个图。
+// SSE 事件协议与 /recommend/stream 相同：start → node×N → done{plan, usage} / error
+router.post('/refine', asyncHandler(async (req, res) => {
+    const { sessionId, instruction } = req.body
+    if (!sessionId || !instruction || !String(instruction).trim()) {
+        return res.status(400).json({ success: false, message: '缺少必要参数' })
+    }
+
+    // 无完整行程 → 400：参数校验放在 HTTP 边界（与 validatePlanParams 同一层）。
+    // 旧会话（Phase 11 前只存概要）也走这里——客户端据此提示"先规划一次"
+    const session = stateManager.getSession(sessionId)
+    if (!session?.tripPlan?.plan) {
+        return res.status(400).json({ success: false, message: '该会话没有可修改的行程（请先规划一次）' })
+    }
+
+    const responseStream = createResponseStream(res)
+    try {
+        responseStream.send({ type: 'start', city: session.tripPlan.city })
+        const { plan, usage } = await travelService.refine(
+            sessionId, String(instruction).trim(),
+            (event) => responseStream.send(event)
+        )
+        responseStream.done({
+            sessionId,
+            plan,
+            usage
+        })
+    } catch (error) {
+        // 流已建立后出错（图节点抛错 / 校验耗尽）：通过 SSE error 事件结束
+        console.error('修改行程错误：', error)
+        responseStream.error(error.message || '修改失败')
+    }
+}))
+
 router.post('/chat', asyncHandler(async (req, res) => {
     const { message, sessionId } = req.body
     if(!message) {
