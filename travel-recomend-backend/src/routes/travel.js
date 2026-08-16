@@ -7,43 +7,78 @@ import { stateManager } from "../services/stateManager.js";
 const router = express.Router()
 const travelService = new TravelService()
 
-router.post('/recommend', asyncHandler(async (req, res) => {
-    const { city, budget, days, sessionId } = req.body
-
-    // 参数校验放在 HTTP 边界：非法输入返回 400，而不是让 service 抛异常
+// 规划参数校验（/recommend 与 /recommend/stream 共用，避免两份规则漂移）
+function validatePlanParams(body) {
+    const { city, budget, days } = body
     if (!city || budget === undefined || budget === null || days === undefined || days === null) {
-        return res.status(400).json({
-            success:false,
-            message:'缺少必要参数'
-        })
+        return { ok: false, message: '缺少必要参数' }
     }
-
     const budgetNum = Number(budget)
     const daysNum = Number(days)
     if (!Number.isFinite(budgetNum) || budgetNum < 100) {
-        return res.status(400).json({
-            success:false,
-            message:'预算不能低于100元'
-        })
+        return { ok: false, message: '预算不能低于100元' }
     }
     if (!Number.isInteger(daysNum) || daysNum < 1 || daysNum > 30) {
-        return res.status(400).json({
-            success:false,
-            message:'天数必须在1-30天之间'
-        })
+        return { ok: false, message: '天数必须在1-30天之间' }
+    }
+    return { ok: true, city, budget: budgetNum, days: daysNum, sessionId: body.sessionId }
+}
+
+router.post('/recommend', asyncHandler(async (req, res) => {
+    // 参数校验放在 HTTP 边界：非法输入返回 400，而不是让 service 抛异常
+    const params = validatePlanParams(req.body)
+    if (!params.ok) {
+        return res.status(400).json({ success: false, message: params.message })
     }
 
     // 会话：传了 sessionId 就把行程草案关联到该会话（chat 可引用）；没传就新建
-    const session = stateManager.ensureSession(sessionId)
+    const session = stateManager.ensureSession(params.sessionId)
 
     // service 返回的就是通过 schema 校验的行程数据；
     // 校验重试耗尽仍失败时 service 抛异常，由全局错误中间件返回 500
-    const response = await travelService.recommend(city, budgetNum, daysNum, session.sessionId)
+    const response = await travelService.recommend(params.city, params.budget, params.days, session.sessionId)
 
     return res.json({
-        success:true,
-        data:response,
+        success: true,
+        data: response,
         sessionId: session.sessionId
+    })
+}))
+
+// 流式规划（Phase 10）：SSE 实时推送 Agent 执行轨迹
+// 事件协议：start（开始）→ node（各节点轨迹，可多个）→ done（行程 + usage）/ error
+router.post('/recommend/stream', asyncHandler(async (req, res) => {
+    const params = validatePlanParams(req.body)
+    if (!params.ok) {
+        return res.status(400).json({ success: false, message: params.message })
+    }
+
+    const session = stateManager.ensureSession(params.sessionId)
+    const responseStream = createResponseStream(res)
+    try {
+        responseStream.send({ type: 'start', city: params.city, budget: params.budget, days: params.days })
+        const { plan, usage } = await travelService.recommendStream(
+            params.city, params.budget, params.days, session.sessionId,
+            (event) => responseStream.send(event)
+        )
+        // done() 会写事件并关闭连接——把数据作为 payload 传入，只发一次 done
+        responseStream.done({
+            sessionId: session.sessionId,
+            plan,
+            usage
+        })
+    } catch (error) {
+        // 流已建立后出错（图节点抛错）：通过 SSE error 事件结束
+        console.error('流式规划错误：', error)
+        responseStream.error(error.message || '规划失败')
+    }
+}))
+
+// 全局成本统计（Phase 10）：聚合所有会话的 usageLog，纯内存读
+router.get('/stats', asyncHandler(async (req, res) => {
+    return res.json({
+        success: true,
+        data: stateManager.getStats()
     })
 }))
 

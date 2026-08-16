@@ -6,6 +6,7 @@ import { stateManager } from './stateManager.js'
 import { createTravelAgentGraph } from '../graphs/travelAgentGraph.js'
 import { sumMessagesUsage, estimateCost } from '../utils/tokenStats.js'
 import { logger } from '../utils/logger.js'
+import { shapeNodeEvent } from '../utils/traceEvents.js'
 
 // 结构化输出校验失败后的最大重试次数（不含首次调用）
 const MAX_RETRIES = 2
@@ -94,8 +95,50 @@ class TravelService {
         // 行程草案写入会话状态：之后 chat 可以引用"用户刚才规划的行程"
         if (sessionId) {
             stateManager.setTripPlan(sessionId, plan)
+            stateManager.recordUsage(sessionId, 'recommend', usage)
         }
         return plan
+    }
+
+    // 流式版 recommend（Phase 10）：用 graph.stream() 的 updates 模式
+    // 把每个节点的执行增量实时转发为轨迹事件。
+    // 与 recommend() 共用同一个图——graph.invoke 与 graph.stream 只是
+    // 同一个执行引擎的两种消费方式（53 个旧测试与 eval 脚本不受影响）。
+    async recommendStream(city, budget, days, sessionId = null, onEvent) {
+        const initialState = {
+            messages: this.getTravelPrompt(city, budget, days),
+            constraints: { budget, days },
+            agentIterations: 0,
+            replanCount: 0
+        }
+
+        // updates：节点级增量（轨迹事件）；values：完整状态（done 时算 usage）
+        const stream = await this.graph.stream(initialState, { streamMode: ['updates', 'values'] })
+        let finalState = null
+        let seq = 0
+
+        for await (const [mode, chunk] of stream) {
+            if (mode === 'updates') {
+                for (const [nodeName, update] of Object.entries(chunk)) {
+                    const event = shapeNodeEvent(nodeName, update, seq++)
+                    if (event) onEvent(event)
+                }
+            } else if (mode === 'values') {
+                finalState = chunk
+            }
+        }
+
+        // 节点抛错（fail_max_iter / fail_validation）时 for-await 直接抛出，
+        // 由路由层转成 SSE error 事件——与 /chat 的错误模式一致
+        const plan = finalState?.plan
+        const usage = sumMessagesUsage(finalState?.messages ?? [])
+        logger.info(`[Cost] 本次行程规划 token 消耗：输入 ${usage.inputTokens} + 输出 ${usage.outputTokens}`)
+
+        if (sessionId) {
+            stateManager.setTripPlan(sessionId, plan)
+            stateManager.recordUsage(sessionId, 'recommend', usage)
+        }
+        return { plan, usage }
     }
 
     // 生成行程大纲：解析 + 校验，失败带反馈重试一次；仍失败返回 null（降级：跳过规划）

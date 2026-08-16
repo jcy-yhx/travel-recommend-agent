@@ -25,7 +25,7 @@
 
 <script setup lang="ts">
     import { nextTick, ref, watch } from 'vue'
-    import { BASE_URL } from '../utils/request'
+    import { streamPost } from '../utils/sse'
 
     interface ChatMessage {
         role: 'user' | 'assistant'
@@ -60,41 +60,16 @@
         messages.value.push(assistantMsg)
 
         try {
-            // 用原生 fetch 消费 SSE 流（EventSource 只支持 GET，不能带 body）
-            const res = await fetch(`${BASE_URL}chat`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text, sessionId: sessionId || undefined })
-            })
-            if (!res.ok || !res.body) {
-                throw new Error(`请求失败（${res.status}）`)
-            }
-
-            const reader = res.body.getReader()
-            const decoder = new TextDecoder()
-            let buffer = ''
-            while (true) {
-                const { done, value } = await reader.read()
-                if (done) break
-                buffer += decoder.decode(value, { stream: true })
-
-                // SSE 事件以空行分隔；最后一段可能是不完整的，留在 buffer 等下一次
-                const parts = buffer.split('\n\n')
-                buffer = parts.pop() ?? ''
-                for (const part of parts) {
-                    const dataLine = part.split('\n').find(line => line.startsWith('data: '))
-                    if (!dataLine) continue
-                    const event = JSON.parse(dataLine.slice(6))
-                    if (event.type === 'chunk') {
-                        assistantMsg.content += event.content
-                    } else if (event.type === 'error') {
-                        throw new Error(event.message || '对话失败')
-                    } else if (event.type === 'done' && event.sessionId) {
-                        // 服务端返回会话 ID，存下来供后续请求复用
-                        localStorage.setItem('travel_session_id', event.sessionId)
-                    }
+            // 通用 SSE 消费（utils/sse.ts）：chunk 追加 / done 存会话 ID / error 抛错
+            await streamPost('chat', { message: text, sessionId: sessionId || undefined }, (event) => {
+                if (event.type === 'chunk') {
+                    assistantMsg.content += event.content
+                } else if (event.type === 'error') {
+                    throw new Error(event.message || '对话失败')
+                } else if (event.type === 'done' && event.sessionId) {
+                    localStorage.setItem('travel_session_id', event.sessionId)
                 }
-            }
+            })
         } catch (error: any) {
             assistantMsg.content = assistantMsg.content || `对话失败：${error.message}`
         } finally {

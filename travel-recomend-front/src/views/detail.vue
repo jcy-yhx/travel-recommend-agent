@@ -4,9 +4,11 @@
             <van-nav-bar fixed left-text="返回" left-arrow @click-left="onBack" :title="formData.city ? formData.city + '行程规划' : '行程规划'"/>
         </div>
         <div class="page-content">
-            <div v-if="isLoading" class="loading-container">
+            <!-- 生成过程：Agent 执行轨迹实时可见（面试展示主场景） -->
+            <TracePanel v-if="traceRunning || traceEvents.length" :events="traceEvents" :running="traceRunning" />
+            <div v-if="traceRunning && !traceEvents.length" class="loading-container">
                 <van-loading size="48px" type="spinner">
-                    正在生成旅游规划...
+                    正在启动 Agent...
                 </van-loading>
             </div>
             <div v-else-if="errMessage" class="error-container">
@@ -75,6 +77,12 @@
                         <li v-for="(warning, index) in tripData.warnings" :key="index">{{ warning }}</li>
                     </ul>
                 </div>
+
+                <!-- 本次请求成本（后端真实统计） -->
+                <div v-if="usage" class="card usage-card">
+                    <div class="section-title">本次请求成本</div>
+                    <div class="usage-line">Token：输入 {{ usage.inputTokens }} + 输出 {{ usage.outputTokens }}，估算成本 ¥{{ usage.estimatedCost.toFixed(4) }}</div>
+                </div>
             </template>
         </div>
     </div>
@@ -84,7 +92,8 @@
 <script setup lang="ts">
     import { onMounted, reactive, ref } from 'vue';
     import { useRouter, useRoute } from 'vue-router';
-    import { post } from '../utils/request'
+    import { streamPost } from '../utils/sse'
+    import TracePanel from '../components/TracePanel.vue'
 
     // 与后端 prompt 中约定的 JSON 结构保持一致
     interface TripSegment {
@@ -125,6 +134,12 @@
     const errMessage = ref('')
     const tripData = ref<TripData | null>(null)
 
+    // Agent 执行轨迹（Phase 10）：后端 SSE 实时推送的节点事件
+    interface TraceEvent { type: 'node'; seq: number; node: string; data: Record<string, any> }
+    const traceEvents = ref<TraceEvent[]>([])
+    const traceRunning = ref(false)
+    const usage = ref<{ inputTokens: number; outputTokens: number; estimatedCost: number } | null>(null)
+
     const formData = reactive({
         city: '',
         budget: null as number | null,
@@ -134,37 +149,41 @@
     const fetchTripData = async () => {
         isLoading.value = true
         errMessage.value = ''
+        traceEvents.value = []
+        usage.value = null
         try {
-            // 携带会话 ID：行程草案会关联到该会话，之后在 chat 页可以继续追问行程
+            // 流式规划：Agent 执行轨迹实时推送（携带会话 ID 关联行程草案）
             const sessionId = localStorage.getItem('travel_session_id') || undefined
-            const res = await post('recommend', {
+            traceRunning.value = true
+            await streamPost('recommend/stream', {
                 city: formData.city,
                 budget: Number(formData.budget),
                 days: Number(formData.days),
                 sessionId
-            })
-            if (res && res.success !== false) {
-                tripData.value = res.data
-                // 记住服务端返回的会话 ID（首次规划时服务端会新建）
-                if (res.sessionId) {
-                    localStorage.setItem('travel_session_id', res.sessionId)
+            }, (event) => {
+                if (event.type === 'node') {
+                    traceEvents.value.push(event as TraceEvent)
+                } else if (event.type === 'done') {
+                    tripData.value = event.plan
+                    usage.value = event.usage ?? null
+                    if (event.sessionId) {
+                        localStorage.setItem('travel_session_id', event.sessionId)
+                    }
+                } else if (event.type === 'error') {
+                    throw new Error(event.message || '规划失败')
                 }
-            } else {
-                errMessage.value = res?.message || '接口调用失败'
-                tripData.value = null
-            }
+            })
         } catch (error: any) {
             console.error('请求失败:', error)
-            if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+            if (error.message?.includes('timeout')) {
                 errMessage.value = '请求超时，请检查网络或稍后重试'
-            } else if (error.response?.data?.message) {
-                errMessage.value = error.response.data.message
             } else {
                 errMessage.value = error.message || '接口调用失败'
             }
             tripData.value = null
         } finally {
             isLoading.value = false
+            traceRunning.value = false
         }
     }
 
@@ -328,5 +347,10 @@
     .error-card {
     text-align: center;
     padding: 40px 16px;
+    }
+
+    .usage-card .usage-line {
+    font-size: 13px;
+    color: #999;
     }
 </style>

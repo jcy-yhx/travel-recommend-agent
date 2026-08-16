@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-Phase 09 — Interview Prep（交付物已生成，模拟面试进行中）
+Phase 10 — 轨迹可视化 + 成本统计（实现完成，学习文档已生成，待用户阅读确认）
 
 ## 阶段进度
 
@@ -22,6 +22,8 @@ Phase 09 — Interview Prep（交付物已生成，模拟面试进行中）
 | Phase 07 LangGraph | ✅ 8 节点图重写手写编排 | ✅ 旧测试 48/48 原样通过 | ✅ 已生成（2026-08-15） | PASS |
 | Phase 08 Eval & Hardening | ✅ 三层 eval + LLM-judge + 硬化收口 | ✅ 53/53 + 端到端 6/6（judge 4.33） | ✅ 已生成（2026-08-15） | PASS |
 | Phase 09 Interview Prep | ✅ README + 讲稿 + 题库 | 模拟面试 2 轮（进行中） | ✅ 已生成（2026-08-15） | PENDING |
+| Phase 10 轨迹可视化 + 成本 | ✅ stream 节点事件 + usage 落盘 | ✅ 单测 13 个（共 66/66） | ✅ 已生成（2026-08-16） | PENDING |
+| Phase 11 会话历史 + 行程修改 | 未开始 | - | 待创建 | PENDING |
 
 ## Backlog（越界发现，暂不处理）
 

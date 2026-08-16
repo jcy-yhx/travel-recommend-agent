@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { estimateCost } from '../utils/tokenStats.js'
 
 const DEFAULT_SESSIONS_FILE = new URL('../data/sessions.json', import.meta.url)
 
@@ -94,6 +95,43 @@ export class StateManager {
         session.updatedAt = new Date().toISOString()
         this.persist()
         return session
+    }
+
+    // 记录一次 LLM 规划请求的 token 用量（成本观测，Phase 08/10）
+    recordUsage(sessionId, kind, usage) {
+        const session = this.sessions.get(sessionId)
+        if (!session) return null
+        if (!session.usageLog) session.usageLog = []
+        session.usageLog.push({
+            at: new Date().toISOString(),
+            kind,
+            inputTokens: usage.inputTokens ?? 0,
+            outputTokens: usage.outputTokens ?? 0
+        })
+        this.persist()
+        return session
+    }
+
+    // 全局成本统计：聚合所有会话的 usageLog（纯内存读，不调 LLM）
+    getStats() {
+        let requestCount = 0
+        let inputTokens = 0
+        let outputTokens = 0
+        for (const session of this.sessions.values()) {
+            for (const entry of session.usageLog ?? []) {
+                requestCount++
+                inputTokens += entry.inputTokens
+                outputTokens += entry.outputTokens
+            }
+        }
+        const usage = { inputTokens, outputTokens }
+        return {
+            sessionCount: this.sessions.size,
+            requestCount,
+            inputTokens,
+            outputTokens,
+            estimatedCost: estimateCost(usage)
+        }
     }
 }
 

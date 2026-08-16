@@ -28,6 +28,8 @@ Structured Output → Tool Calling → Agent Loop → State → RAG → Planning
 | 07 | LangGraph | 工程化重写 loop | 用 LangGraph 重写 Phase 03 的 loop；能回答"为什么不用手写 loop" | 中高（易被问穿） | 1-2 天 | 完整 |
 | 08 | Eval & Hardening | 可测试可解释 | eval 集 ≥15 用例 + rubric；错误处理/成本/日志 | 极高 | 2-3 天 | 完整 |
 | 09 | Interview Prep | 交付形态 | README + 30s/3min 讲稿 + 2 次模拟面试 | 极高 | 1-2 天 | 完整 |
+| 10 | 轨迹可视化 + 成本统计 | 面试展示主场景 | /recommend/stream 节点事件流 + usage 落盘聚合 | 极高 | 1-2 天 | 完整 |
+| 11 | 会话历史 + 行程修改 | 多轮 Agent 体验闭环 | sessions API + refine（用户触发的 re-plan） | 高 | 1-2 天 | 完整 |
 
 > Phase 08 由原"Production / Interview"拆分而来（原范围过大）；phase-09.md 待创建。
 
