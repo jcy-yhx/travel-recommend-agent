@@ -25,8 +25,14 @@ export const createResponseStream = (res) => {
             res.end()
         },
         //异常结束：发送 error 事件并关闭连接
-        error: (message) => {
-            write({ type: 'error', message })
+        error: (error) => {
+            const isError = error instanceof Error
+            write({
+                type: 'error',
+                message: isError ? error.message : String(error),
+                code: isError ? error.code : undefined,
+                retryable: isError ? Boolean(error.retryable) : false
+            })
             res.end()
         }
     }

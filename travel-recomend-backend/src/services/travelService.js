@@ -7,6 +7,7 @@ import { createTravelAgentGraph } from '../graphs/travelAgentGraph.js'
 import { sumMessagesUsage, estimateCost } from '../utils/tokenStats.js'
 import { logger } from '../utils/logger.js'
 import { shapeNodeEvent } from '../utils/traceEvents.js'
+import { UpstreamServiceError, withRetry } from '../utils/retry.js'
 
 // 结构化输出校验失败后的最大重试次数（不含首次调用）
 const MAX_RETRIES = 2
@@ -98,6 +99,8 @@ class TravelService {
             model,
             // 请求超时：防止 LLM 挂死时请求无限等待
             timeout: 60000,
+            // 关闭 SDK 隐式重试，统一由 callUpstream 执行一次可观测重试。
+            maxRetries: 0,
             // 成本控制：限制单次回复最大 token 数
             maxTokens: 4096
         }
@@ -126,6 +129,24 @@ class TravelService {
             ...baseConfig,
             temperature: 0.2
         })
+    }
+
+    async callUpstream(operation) {
+        try {
+            return await withRetry(operation, {
+                onRetry: (error, attempt) => logger.warn(`[LLM] 第 ${attempt} 次调用失败，200ms 后重试：${error.message}`)
+            })
+        } catch (error) {
+            throw new UpstreamServiceError('LLM', error)
+        }
+    }
+
+    invokeToolLlm(llm, messages) {
+        return this.callUpstream(() => llm.invoke(messages))
+    }
+
+    invokeStructuredLlm(messages) {
+        return this.callUpstream(() => this.structuredLlm.invoke(messages))
     }
 
     async recommend(city, budget, days, sessionId = null) {
@@ -192,13 +213,15 @@ class TravelService {
 
         const plan = finalState?.plan
         const usage = sumMessagesUsage(finalState?.messages ?? [])
-        logger.info(`[Cost] 本次行程规划 token 消耗：输入 ${usage.inputTokens} + 输出 ${usage.outputTokens}`)
+        const usageWithCost = { ...usage, estimatedCost: estimateCost(usage) }
+        logger.info(`[Cost] 本次行程规划 token 消耗：输入 ${usage.inputTokens} + 输出 ${usage.outputTokens}` +
+            `，估算成本 ¥${usageWithCost.estimatedCost.toFixed(4)}`)
 
         if (sessionId) {
             stateManager.setTripPlan(sessionId, plan)
             stateManager.recordUsage(sessionId, 'recommend', usage)
         }
-        return { plan, usage }
+        return { plan, usage: usageWithCost }
     }
 
     // 修改行程（Phase 11）：用户对已有行程提出修改指令，重跑同一个图。
@@ -225,19 +248,21 @@ class TravelService {
 
         const plan = finalState?.plan
         const usage = sumMessagesUsage(finalState?.messages ?? [])
-        logger.info(`[Cost] 修改行程 token 消耗：输入 ${usage.inputTokens} + 输出 ${usage.outputTokens}`)
+        const usageWithCost = { ...usage, estimatedCost: estimateCost(usage) }
+        logger.info(`[Cost] 修改行程 token 消耗：输入 ${usage.inputTokens} + 输出 ${usage.outputTokens}` +
+            `，估算成本 ¥${usageWithCost.estimatedCost.toFixed(4)}`)
 
         // 新行程覆盖旧行程（同一会话只保留最新一份行程）
         stateManager.setTripPlan(sessionId, plan)
         stateManager.recordUsage(sessionId, 'refine', usage)
-        return { plan, usage }
+        return { plan, usage: usageWithCost }
     }
 
     // 生成行程大纲：解析 + 校验，失败带反馈重试一次；仍失败返回 null（降级：跳过规划）
     async generateOutline(messages) {
         for (let attempt = 0; attempt <= 1; attempt++) {
             try {
-                const response = await this.structuredLlm.invoke(messages)
+                const response = await this.invokeStructuredLlm(messages)
                 const json = JSON.parse(extractJson(response.content))
                 PlanOutlineSchema.parse(json)
                 return response
@@ -275,7 +300,7 @@ class TravelService {
                     `你上一次的输出无法解析，错误信息：${reason}。` +
                     `请重新输出，必须严格符合要求的结构，且只输出 JSON 对象本身。`
                 ))
-                messages.push(await this.structuredLlm.invoke(messages))
+                messages.push(await this.invokeStructuredLlm(messages))
             }
         }
 
@@ -344,7 +369,7 @@ ${SCHEMA_OUTPUT_INSTRUCTION}`)
 
         try {
             //调用大模型
-            const stream = await this.llm.stream(messages)
+            const stream = await this.callUpstream(() => this.llm.stream(messages))
             let fullResponse = ''
             for await (const chunk of stream) {
                 const content = chunk.content || ''

@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { OpenAIEmbeddings } from '@langchain/openai'
+import { withRetry } from '../utils/retry.js'
 
 const DEFAULT_INDEX_FILE = new URL('../data/attractions-embeddings.json', import.meta.url)
 
@@ -28,7 +29,9 @@ function createEmbedder() {
         configuration: { baseURL: process.env.SILICONFLOW_BASE_URL },
         apiKey: process.env.SILICONFLOW_API_KEY,
         model: process.env.SILICONFLOW_EMBEDDING_MODEL,
-        batchSize: 32
+        batchSize: 32,
+        timeout: 15000,
+        maxRetries: 0
     })
 }
 
@@ -63,7 +66,7 @@ export class EmbeddingIndex {
             }
         }
 
-        const vectors = await this.embedder.embedDocuments(texts)
+        const vectors = await withRetry(() => this.embedder.embedDocuments(texts))
         this.index = { model: process.env.SILICONFLOW_EMBEDDING_MODEL, texts, vectors }
         writeFileSync(this.filePath, JSON.stringify(this.index))
         console.log(`[EmbeddingIndex] 索引构建完成并缓存：${vectors.length} 条向量`)
@@ -74,7 +77,7 @@ export class EmbeddingIndex {
         if (!this.index) {
             throw new Error('索引未构建，请先调用 loadOrBuild')
         }
-        const queryVector = await this.embedder.embedQuery(query)
+        const queryVector = await withRetry(() => this.embedder.embedQuery(query))
         return this.index.vectors
             .map((vector, index) => ({ index, score: cosineSimilarity(queryVector, vector) }))
             .sort((a, b) => b.score - a.score)

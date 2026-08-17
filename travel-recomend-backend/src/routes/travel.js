@@ -70,7 +70,7 @@ router.post('/recommend/stream', asyncHandler(async (req, res) => {
     } catch (error) {
         // 流已建立后出错（图节点抛错）：通过 SSE error 事件结束
         console.error('流式规划错误：', error)
-        responseStream.error(error.message || '规划失败')
+        responseStream.error(error)
     }
 }))
 
@@ -141,7 +141,7 @@ router.post('/refine', asyncHandler(async (req, res) => {
     } catch (error) {
         // 流已建立后出错（图节点抛错 / 校验耗尽）：通过 SSE error 事件结束
         console.error('修改行程错误：', error)
-        responseStream.error(error.message || '修改失败')
+        responseStream.error(error)
     }
 }))
 
@@ -168,7 +168,7 @@ router.post('/chat', asyncHandler(async (req, res) => {
     } catch (error) {
         // 流已建立后出错：通过 SSE error 事件结束，而不是让异常冒泡
         console.error('对话接口错误：', error)
-        responseStream.error(error.message || '对话失败')
+        responseStream.error(error)
     }
 }))
 

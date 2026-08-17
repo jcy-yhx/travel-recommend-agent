@@ -84,7 +84,7 @@ export function createTravelAgentGraph(service) {
             ? service.toolLlm.bindTools(TOOLS, { tool_choice: 'required' })
             : service.toolLlm.bindTools(TOOLS)
 
-        const response = await llm.invoke(messages)
+        const response = await service.invokeToolLlm(llm, messages)
         logger.info(`[Graph/agent] 第 ${agentIterations + 1} 轮：${response.tool_calls?.length ?? 0} 次工具调用`,
             response.tool_calls?.map(tc => tc.name).join(', ') || '（模型停止请求工具）')
 
@@ -157,7 +157,7 @@ export function createTravelAgentGraph(service) {
 
         const originalLength = messages.length
         const msgs = [...messages, prompt]
-        msgs.push(toMessage(await service.structuredLlm.invoke(msgs)))
+        msgs.push(toMessage(await service.invokeStructuredLlm(msgs)))
         const plan = await service.validatePlanWithRetries(msgs)
 
         // 返回增量消息（图会自动追加），以及最终行程
