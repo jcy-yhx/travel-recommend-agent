@@ -59,8 +59,8 @@ export class StateManager {
     }
 
     // 取会话；不存在时创建。传入已有 sessionId 但服务端已重启丢失时，按新会话创建
-    ensureSession(sessionId) {
-        if (this.postgres) return this.postgres.ensureSession(sessionId)
+    ensureSession(sessionId, userId) {
+        if (this.postgres) return this.postgres.ensureSession(sessionId, userId)
         if (sessionId && this.sessions.has(sessionId)) {
             return this.sessions.get(sessionId)
         }
@@ -77,8 +77,8 @@ export class StateManager {
         return session
     }
 
-    getSession(sessionId) {
-        if (this.postgres) return this.postgres.getSession(sessionId)
+    getSession(sessionId, userId) {
+        if (this.postgres) return this.postgres.getSession(sessionId, userId)
         return this.sessions.get(sessionId) ?? null
     }
 
@@ -116,8 +116,8 @@ export class StateManager {
     }
 
     // 会话列表：元数据 + 最近一条用户消息预览，按最近更新排序（profile 页列表）
-    listSessions() {
-        if (this.postgres) return this.postgres.listSessions()
+    listSessions(userId) {
+        if (this.postgres) return this.postgres.listSessions(userId)
         return [...this.sessions.values()]
             .map(session => {
                 const lastUser = [...(session.history ?? [])].reverse().find(m => m.role === 'user')
@@ -137,8 +137,8 @@ export class StateManager {
     }
 
     // 删除会话（含持久化）；返回是否真实删除了一个会话
-    deleteSession(sessionId) {
-        if (this.postgres) return this.postgres.deleteSession(sessionId)
+    deleteSession(sessionId, userId) {
+        if (this.postgres) return this.postgres.deleteSession(sessionId, userId)
         const existed = this.sessions.delete(sessionId)
         if (existed) this.persist()
         return existed

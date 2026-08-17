@@ -1,6 +1,7 @@
 import 'dotenv/config.js'
 import express from 'express'
 import travelRouter from './routes/travel.js'
+import authRouter from './routes/auth.js'
 import cors from 'cors'
 import { createRateLimiter } from './middleware/rateLimiter.js'
 import { logger } from './utils/logger.js'
@@ -26,6 +27,7 @@ app.get('/heartbeat',(req,res) => {
 
 // API 路由：限流保护（LLM 接口是成本敏感资源，默认 60 秒内最多 30 次/IP）
 app.use('/api', createRateLimiter({ windowMs: 60_000, max: 30 }))
+app.use('/api/auth', authRouter)
 app.use('/api/travel',travelRouter)
 
 // 404：未匹配任何路由的请求

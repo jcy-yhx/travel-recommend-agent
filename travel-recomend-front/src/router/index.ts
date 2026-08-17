@@ -21,11 +21,15 @@ const routes = [
     name: 'detail',
     component: () => import('../views/detail.vue')
   }
+  ,{ path: '/login', name: 'login', component: () => import('../views/login.vue') }
 ]
 
 const router = createRouter({
   history: createWebHistory(),
   routes
+})
+router.beforeEach(to => {
+  if (to.path !== '/login' && !localStorage.getItem('travel_token')) return '/login'
 })
 
 export default router

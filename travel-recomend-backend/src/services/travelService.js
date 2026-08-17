@@ -97,8 +97,8 @@ class TravelService {
             },
             apiKey,
             model,
-            // 请求超时：防止 LLM 挂死时请求无限等待
-            timeout: 60000,
+            // 旅游规划一次图执行会连续调用多个上游服务；默认 120 秒，部署时可覆盖。
+            timeout: Number(process.env.LLM_TIMEOUT_MS || 120000),
             // 关闭 SDK 隐式重试，统一由 callUpstream 执行一次可观测重试。
             maxRetries: 0,
             // 成本控制：限制单次回复最大 token 数

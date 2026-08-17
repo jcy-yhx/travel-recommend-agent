@@ -11,7 +11,7 @@ export async function streamPost(
 ): Promise<void> {
     const res = await fetch(`${BASE_URL}${url}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('travel_token') ? { Authorization: `Bearer ${localStorage.getItem('travel_token')}` } : {}) },
         body: JSON.stringify(body)
     })
 

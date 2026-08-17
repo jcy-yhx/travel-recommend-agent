@@ -16,7 +16,11 @@ services:
   backend:
     build: ./travel-recomend-backend
     env_file: ./travel-recomend-backend/.env
-    environment: { PORT: 3300, SESSIONS_FILE: /data/sessions.json, DATABASE_URL: postgresql://travel_agent:travel_agent_dev_only@postgres:5432/travel_agent }
+    environment:
+      PORT: "3300"
+      SESSIONS_FILE: /data/sessions.json
+      DATABASE_URL: postgresql://travel_agent:travel_agent_dev_only@postgres:5432/travel_agent
+      JWT_SECRET: "${JWT_SECRET:-dev-only-change-before-production}"
     volumes: [travel-data:/data]
     expose: ["3300"]
     depends_on: { postgres: { condition: service_healthy } }

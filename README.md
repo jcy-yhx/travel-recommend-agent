@@ -59,6 +59,16 @@ Eval：53 单测 / 检索 8 用例 / 端到端 6 用例（规则分 + LLM-judge�
 
 ## 快速开始
 
+### Docker 一键启动（推荐）
+
+```bash
+docker compose up --build
+```
+
+打开 `http://localhost:5173`，先注册账号再使用。首次启动会自动创建 PostgreSQL 表；会话数据保存在 Docker 命名卷中。
+
+生产部署前请设置强随机密钥：`JWT_SECRET=你的随机密钥 docker compose up -d --build`。
+
 ```bash
 # 后端
 cd travel-recomend-backend

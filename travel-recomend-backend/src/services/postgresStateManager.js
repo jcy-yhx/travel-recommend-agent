@@ -4,14 +4,14 @@ import { estimateCost } from '../utils/tokenStats.js'
 export class PostgresStateManager {
     constructor(pool) { this.pool = pool }
 
-    async ensureSession(sessionId) {
+    async ensureSession(sessionId, userId) {
         const id = sessionId || randomUUID()
-        await this.pool.query('INSERT INTO sessions(id) VALUES($1) ON CONFLICT (id) DO NOTHING', [id])
-        return this.getSession(id)
+        await this.pool.query('INSERT INTO sessions(id,user_id) VALUES($1,$2) ON CONFLICT (id) DO NOTHING', [id, userId])
+        return this.getSession(id, userId)
     }
 
-    async getSession(id) {
-        const { rows } = await this.pool.query('SELECT * FROM sessions WHERE id=$1', [id])
+    async getSession(id, userId) {
+        const { rows } = await this.pool.query('SELECT * FROM sessions WHERE id=$1 AND ($2::uuid IS NULL OR user_id=$2)', [id, userId ?? null])
         if (!rows[0]) return null
         const session = rows[0]
         const history = (await this.pool.query('SELECT role, content, created_at FROM messages WHERE session_id=$1 ORDER BY created_at DESC LIMIT 20', [id])).rows.reverse()
@@ -30,13 +30,13 @@ export class PostgresStateManager {
         return this.getSession(id)
     }
 
-    async deleteSession(id) { return (await this.pool.query('DELETE FROM sessions WHERE id=$1', [id])).rowCount > 0 }
+    async deleteSession(id, userId) { return (await this.pool.query('DELETE FROM sessions WHERE id=$1 AND user_id=$2', [id, userId])).rowCount > 0 }
 
-    async listSessions() {
+    async listSessions(userId) {
         const { rows } = await this.pool.query(`SELECT s.id, s.created_at, s.updated_at, s.trip_plan,
           (SELECT count(*) FROM messages m WHERE m.session_id=s.id)::int message_count,
           (SELECT content FROM messages m WHERE m.session_id=s.id AND role='user' ORDER BY created_at DESC LIMIT 1) preview
-          FROM sessions s ORDER BY s.updated_at DESC`)
+          FROM sessions s WHERE s.user_id=$1 ORDER BY s.updated_at DESC`, [userId])
         return rows.map(r => ({ sessionId: r.id, createdAt: r.created_at.toISOString(), updatedAt: r.updated_at.toISOString(), messageCount: r.message_count, hasPlan: Boolean(r.trip_plan?.plan), city: r.trip_plan?.city ?? null, days: r.trip_plan?.days ?? null, totalBudget: r.trip_plan?.totalBudget ?? null, preview: (r.preview ?? '').slice(0, 30) }))
     }
 

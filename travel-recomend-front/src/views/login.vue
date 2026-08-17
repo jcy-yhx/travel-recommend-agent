@@ -1,0 +1,6 @@
+<template><div class="login"><h2>旅游 Agent</h2><van-tabs v-model:active="mode"><van-tab title="登录"/><van-tab title="注册"/></van-tabs><van-cell-group inset><van-field v-model="username" label="用户名" placeholder="3-32 位字母、数字或下划线"/><van-field v-model="password" label="密码" type="password" placeholder="至少 8 位"/></van-cell-group><van-button type="primary" block :loading="loading" @click="submit">{{ mode ? '注册并登录' : '登录' }}</van-button></div></template>
+<script setup lang="ts">
+import { ref } from 'vue'; import { useRouter } from 'vue-router'; import { showToast } from 'vant'
+const router=useRouter(), mode=ref(0), username=ref(''), password=ref(''), loading=ref(false)
+async function submit(){ loading.value=true; try { const r=await fetch(`/api/auth/${mode.value?'register':'login'}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username.value,password:password.value})}); const body=await r.json(); if(!r.ok) throw new Error(body.message); localStorage.setItem('travel_token',body.data.token); router.replace('/') } catch(e:any){showToast(e.message||'操作失败')} finally{loading.value=false} }
+</script><style scoped>.login{max-width:420px;margin:12vh auto;padding:24px}.login h2{text-align:center;margin-bottom:28px}.van-button{margin-top:20px}</style>
