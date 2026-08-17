@@ -145,10 +145,10 @@ test('无完整行程的会话 refine 抛明确错误', async () => {
 
 test('refine 图节点抛错时向上传播（路由层转 SSE error）', async () => {
     const { service } = makeService()
-    // toolLlm 永远返回工具调用 → 5 轮后 fail_max_iter 抛错
+    // 未知工具不占天气/景点额度，持续调用时仍由 5 轮 max_iter 兜底。
     service.toolLlm = {
         invoke: async () => new AIMessage({ content: '', tool_calls: [
-            { name: 'get_weather', args: { city: '杭州' }, id: 'c_loop' }
+            { name: 'unknown_tool', args: {}, id: 'c_loop' }
         ] })
     }
     service.toolLlm.bindTools = () => service.toolLlm

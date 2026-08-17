@@ -68,14 +68,11 @@ function toolCallMsg(toolCalls) {
     return new AIMessage({ content: '', tool_calls: toolCalls })
 }
 
-test('多轮循环：模型连续 2 轮请求工具后自主停止', async () => {
+test('工具调用后模型自主停止，进入规划阶段', async () => {
     const service = makeServiceWithStub((callIndex) => {
-        // 第 1 轮：查天气；第 2 轮：查景点；第 3 轮：停止（无 tool_calls）
+        // 第 1 轮：查天气；第 2 轮：停止（无 tool_calls）
         if (callIndex === 0) {
             return toolCallMsg([{ name: 'get_weather', args: { city: '杭州' }, id: 'c1' }])
-        }
-        if (callIndex === 1) {
-            return toolCallMsg([{ name: 'search_attractions', args: { query: '杭州' }, id: 'c2' }])
         }
         return new AIMessage({ content: '信息已足够。' })
     })
@@ -88,7 +85,8 @@ test('多轮循环：模型连续 2 轮请求工具后自主停止', async () =>
 
 test('max_iter 兜底：模型无限请求工具 → 抛明确错误而不是无限烧 token', async () => {
     const service = makeServiceWithStub(() =>
-        toolCallMsg([{ name: 'get_weather', args: { city: '杭州' }, id: 'c_loop' }])
+        // 未知工具不占天气/景点配额，仍由 max_iter 兜底拦截。
+        toolCallMsg([{ name: 'unknown_tool', args: {}, id: 'c_loop' }])
     )
 
     await assert.rejects(
@@ -98,10 +96,10 @@ test('max_iter 兜底：模型无限请求工具 → 抛明确错误而不是无
 })
 
 test('工具执行失败后循环继续：模型下一轮换参数重试', async () => {
-    // 第 1 轮：查询未知城市（工具返回 error 字段）→ 第 2 轮模型"换一个城市"查询 → 第 3 轮停止
+    // 第 1 轮：未知工具（返回 error）→ 第 2 轮模型换为天气工具 → 第 3 轮停止
     const service = makeServiceWithStub((callIndex) => {
         if (callIndex === 0) {
-            return toolCallMsg([{ name: 'get_weather', args: { city: '不存在的城市' }, id: 'c1' }])
+            return toolCallMsg([{ name: 'unknown_tool', args: {}, id: 'c1' }])
         }
         if (callIndex === 1) {
             return toolCallMsg([{ name: 'get_weather', args: { city: '杭州' }, id: 'c2' }])
@@ -111,4 +109,17 @@ test('工具执行失败后循环继续：模型下一轮换参数重试', async
 
     const plan = await service.recommend('杭州', 800, 1)
     assert.equal(plan.city, '杭州')
+})
+
+test('天气额度耗尽后强制进入规划，不会因重复工具调用达到 max_iter', async () => {
+    let agentCalls = 0
+    const service = makeServiceWithStub(() => {
+        agentCalls++
+        return toolCallMsg([{ name: 'get_weather', args: { city: '杭州' }, id: `c_${agentCalls}` }])
+    })
+
+    const plan = await service.recommend('杭州', 800, 1)
+    assert.equal(plan.city, '杭州')
+    // 第 1 次实际查天气；第 2 次请求被硬额度拦截后直接进 planner。
+    assert.equal(agentCalls, 2)
 })

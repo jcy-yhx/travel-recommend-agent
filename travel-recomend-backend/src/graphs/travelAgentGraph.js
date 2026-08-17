@@ -1,5 +1,5 @@
 import { Annotation, StateGraph, START, END, messagesStateReducer } from '@langchain/langgraph'
-import { HumanMessage, AIMessage } from '@langchain/core/messages'
+import { HumanMessage, AIMessage, ToolMessage } from '@langchain/core/messages'
 import { TOOLS, executeToolCall } from '../tools/index.js'
 import { validatePlan } from '../services/planValidator.js'
 import { logger } from '../utils/logger.js'
@@ -14,6 +14,41 @@ function toMessage(value) {
 
 // Agent Loop 的最大迭代轮数（从 travelService 移到这里——循环的控制权属于图）
 export const MAX_AGENT_ITERATIONS = 5
+// 工具预算是程序级硬限制，不依赖模型是否遵守 prompt。
+export const MAX_WEATHER_CALLS = 1
+export const MAX_ATTRACTION_SEARCHES = 2
+
+// 从模型请求中挑出仍在预算内的调用，并计算执行后的计数。
+// 未知工具不占已知工具预算，仍交给 executeToolCall 返回错误信息；
+// 若模型持续请求未知工具，MAX_AGENT_ITERATIONS 仍是最终兜底。
+export function partitionToolCalls(toolCalls = [], { weatherCalls = 0, attractionSearches = 0 } = {}) {
+    let nextWeatherCalls = weatherCalls
+    let nextAttractionSearches = attractionSearches
+    const executable = []
+    const skipped = []
+
+    for (const toolCall of toolCalls) {
+        if (toolCall.name === 'get_weather') {
+            if (nextWeatherCalls >= MAX_WEATHER_CALLS) {
+                skipped.push(toolCall)
+            } else {
+                executable.push(toolCall)
+                nextWeatherCalls++
+            }
+        } else if (toolCall.name === 'search_attractions') {
+            if (nextAttractionSearches >= MAX_ATTRACTION_SEARCHES) {
+                skipped.push(toolCall)
+            } else {
+                executable.push(toolCall)
+                nextAttractionSearches++
+            }
+        } else {
+            executable.push(toolCall)
+        }
+    }
+
+    return { executable, skipped, weatherCalls: nextWeatherCalls, attractionSearches: nextAttractionSearches }
+}
 
 // 图的共享状态（State）：LangGraph 的 State 与 Phase 04 的会话 State 是
 // 两个不同层面的概念——这里是"单次图执行内的状态"，跨节点自动流转。
@@ -24,6 +59,9 @@ const AgentState = Annotation.Root({
     constraints: Annotation({ default: () => ({ budget: 0, days: 1 }) }),
     // Agent 循环轮数（agent 节点每次 +1，用于 max_iter 兜底）
     agentIterations: Annotation({ default: () => 0 }),
+    // 工具调用计数：限制属于图状态，跨 agent/tools 循环持久传递。
+    weatherCalls: Annotation({ default: () => 0 }),
+    attractionSearches: Annotation({ default: () => 0 }),
     // 行程大纲（planner 产出；为 null 表示降级跳过规划）
     outline: Annotation({ default: () => null }),
     // 最终行程（executor 产出）
@@ -53,28 +91,38 @@ export function createTravelAgentGraph(service) {
         return { messages: [toMessage(response)], agentIterations: agentIterations + 1 }
     }
 
-    // agent 之后的路径选择（条件边）：有工具调用 → 继续循环或兜底失败；
-    // 无工具调用 → 进入规划阶段
+    // agent 之后的路径选择：只执行预算内的已知工具调用。
+    // 已知工具预算耗尽后，强制进入 planner，不能让模型反复请求工具烧光迭代。
     function routeAfterAgent(state) {
         const last = state.messages[state.messages.length - 1]
         if (last?.tool_calls?.length) {
             if (state.agentIterations >= MAX_AGENT_ITERATIONS) return 'fail_max_iter'
-            return 'tools'
+            const { executable } = partitionToolCalls(last.tool_calls, state)
+            if (executable.length > 0) return 'tools'
+            logger.info('[Graph/agent] 工具预算已耗尽，强制进入行程规划')
         }
         return 'planner'
     }
 
-    // ② tools 节点：执行上一条消息里的全部工具调用
+    // ② tools 节点：仅执行预算内调用；同一轮多余调用返回 ToolMessage，
+    // 让 LLM 知道该调用未实际发生，同时保持 tool_call_id 协议完整。
     async function toolsNode(state) {
         const last = state.messages[state.messages.length - 1]
         const toolMessages = []
-        for (const toolCall of last.tool_calls) {
+        const { executable, skipped, weatherCalls, attractionSearches } = partitionToolCalls(last.tool_calls, state)
+        for (const toolCall of executable) {
             const toolMessage = await executeToolCall(toolCall)
             logger.info(`[Graph/tools] ${toolCall.name}(${JSON.stringify(toolCall.args)}) 执行结果：`,
                 toolMessage.content.slice(0, 100))
             toolMessages.push(toolMessage)
         }
-        return { messages: toolMessages }
+        for (const toolCall of skipped) {
+            toolMessages.push(new ToolMessage({
+                content: JSON.stringify({ error: `工具调用额度已用尽：${toolCall.name}` }),
+                tool_call_id: toolCall.id
+            }))
+        }
+        return { messages: toolMessages, weatherCalls, attractionSearches }
     }
 
     // ③ planner 节点：生成行程大纲（失败可降级——Phase 06 的 generateOutline）

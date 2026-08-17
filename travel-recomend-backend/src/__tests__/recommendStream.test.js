@@ -74,14 +74,15 @@ test('事件序列完整覆盖核心节点，最终返回 plan 和 usage', async
     // 最终结果
     assert.equal(plan.city, '杭州')
     assert.equal(typeof usage.inputTokens, 'number')
+    assert.equal(typeof usage.estimatedCost, 'number')
 })
 
 test('图节点抛错（max_iter 兜底）时 stream 向上抛出', async () => {
     const service = makeService()
-    // toolLlm 永远返回工具调用 → 5 轮后 fail_max_iter 节点抛错
+    // toolLlm 永远返回未知工具调用 → 不占已知工具额度，5 轮后仍由 fail_max_iter 拦截
     service.toolLlm = {
         invoke: async () => new AIMessage({ content: '', tool_calls: [
-            { name: 'get_weather', args: { city: '杭州' }, id: 'c_loop' }
+            { name: 'unknown_tool', args: {}, id: 'c_loop' }
         ] })
     }
     service.toolLlm.bindTools = () => service.toolLlm
