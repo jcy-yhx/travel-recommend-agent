@@ -5,14 +5,16 @@ import cors from 'cors'
 import { createRateLimiter } from './middleware/rateLimiter.js'
 import { logger } from './utils/logger.js'
 const app = express()
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://127.0.0.1:5173,http://localhost:5173')
+    .split(',').map(origin => origin.trim()).filter(Boolean)
 
 const port = process.env.PORT
 
-app.use(cors())
+app.use(cors({ origin: (origin, callback) => callback(null, !origin || allowedOrigins.includes(origin)) }))
 
 // 解析 JSON 请求体
-app.use(express.json())
-app.use(express.urlencoded({ extended: true }))
+app.use(express.json({ limit: '16kb' }))
+app.use(express.urlencoded({ extended: true, limit: '16kb' }))
 
 //创建一个心跳接口（不限流——健康检查永远可用）
 app.get('/heartbeat',(req,res) => {

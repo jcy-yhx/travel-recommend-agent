@@ -13,6 +13,10 @@ function validatePlanParams(body) {
     if (!city || budget === undefined || budget === null || days === undefined || days === null) {
         return { ok: false, message: '缺少必要参数' }
     }
+    const normalizedCity = String(city).trim()
+    if (!/^[\p{Script=Han}A-Za-z·\s-]{2,30}$/u.test(normalizedCity)) {
+        return { ok: false, message: '目的地格式不正确（2-30 个中英文字符）' }
+    }
     const budgetNum = Number(budget)
     const daysNum = Number(days)
     if (!Number.isFinite(budgetNum) || budgetNum < 100) {
@@ -21,7 +25,7 @@ function validatePlanParams(body) {
     if (!Number.isInteger(daysNum) || daysNum < 1 || daysNum > 30) {
         return { ok: false, message: '天数必须在1-30天之间' }
     }
-    return { ok: true, city, budget: budgetNum, days: daysNum, sessionId: body.sessionId }
+    return { ok: true, city: normalizedCity, budget: budgetNum, days: daysNum, sessionId: body.sessionId }
 }
 
 router.post('/recommend', asyncHandler(async (req, res) => {
@@ -118,6 +122,9 @@ router.post('/refine', asyncHandler(async (req, res) => {
     if (!sessionId || !instruction || !String(instruction).trim()) {
         return res.status(400).json({ success: false, message: '缺少必要参数' })
     }
+    if (String(instruction).trim().length > 200) {
+        return res.status(400).json({ success: false, message: '修改指令不能超过200个字符' })
+    }
 
     // 无完整行程 → 400：参数校验放在 HTTP 边界（与 validatePlanParams 同一层）。
     // 旧会话（Phase 11 前只存概要）也走这里——客户端据此提示"先规划一次"
@@ -152,6 +159,9 @@ router.post('/chat', asyncHandler(async (req, res) => {
             success:false,
             message:'缺少必要参数'
         })
+    }
+    if (String(message).trim().length > 1000) {
+        return res.status(400).json({ success: false, message: '消息不能超过1000个字符' })
     }
 
     // 会话：不存在则创建；客户端用 done 事件里的 sessionId 记住它
