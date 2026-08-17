@@ -15,6 +15,8 @@ import TravelService from '../src/services/travelService.js'
 import { validatePlan } from '../src/services/planValidator.js'
 import { extractJson } from '../src/utils/extractJson.js'
 import { sumMessagesUsage } from '../src/utils/tokenStats.js'
+import { estimateCost } from '../src/utils/tokenStats.js'
+import { MAX_ATTRACTION_SEARCHES, MAX_WEATHER_CALLS } from '../src/graphs/travelAgentGraph.js'
 
 const CASES = [
     { id: 'E2E-01', city: '北京', budget: 1500, days: 2 },
@@ -82,6 +84,10 @@ async function runCase(service, testCase) {
         })
         const plan = result.plan
         const usage = sumMessagesUsage(result.messages)
+        const tools = {
+            weatherCalls: result.weatherCalls ?? 0,
+            attractionSearches: result.attractionSearches ?? 0
+        }
 
         // 规则分：5 条确定性规则（预算/天数/明细）
         const rules = validatePlan({ budget, days }, plan)
@@ -99,7 +105,10 @@ async function runCase(service, testCase) {
             strengths: judge?.strengths?.slice(0, 2) ?? [],
             issues: judge?.issues?.slice(0, 2) ?? [],
             judgeRaw,
-            usage
+            usage,
+            estimatedCost: estimateCost(usage),
+            tools,
+            toolBudgetPass: tools.weatherCalls <= MAX_WEATHER_CALLS && tools.attractionSearches <= MAX_ATTRACTION_SEARCHES
         }
     } catch (error) {
         return {
@@ -138,6 +147,9 @@ const judgeScores = ok.filter(r => r.judgeScore != null).map(r => r.judgeScore)
 const avgScore = judgeScores.length ? (judgeScores.reduce((a, b) => a + b, 0) / judgeScores.length).toFixed(2) : 'N/A'
 const totalInput = results.reduce((s, r) => s + (r.usage?.inputTokens ?? 0), 0)
 const totalOutput = results.reduce((s, r) => s + (r.usage?.outputTokens ?? 0), 0)
+const totalCost = results.reduce((s, r) => s + (r.estimatedCost ?? 0), 0)
+const budgetPassCount = ok.filter(r => r.toolBudgetPass).length
+const avgDuration = ok.length ? (ok.reduce((s, r) => s + Number(r.durationSec), 0) / ok.length).toFixed(1) : 'N/A'
 
 const summary = `
 ## 端到端评估汇总（批次 ${offset + 1}-${offset + batch.length}）
@@ -148,13 +160,16 @@ const summary = `
 | 规则校验通过率 | ${rulePassCount}/${ok.length} |
 | judge 平均分 | ${avgScore} / 5 |
 | 本批 token 消耗 | 输入 ${totalInput} + 输出 ${totalOutput} |
+| 估算成本 | ¥${totalCost.toFixed(4)} |
+| 平均耗时 | ${avgDuration} 秒 |
+| 工具预算遵守率 | ${budgetPassCount}/${ok.length}（天气≤${MAX_WEATHER_CALLS}，景点检索≤${MAX_ATTRACTION_SEARCHES}） |
 
 ### 明细
 
-| 用例 | 城市 | 预算/天数 | 状态 | 规则 | judge | 维度 | 主要问题 |
-|---|---|---|---|---|---|---|---|
+| 用例 | 城市 | 预算/天数 | 状态 | 规则 | 工具调用 | 耗时 | Token | judge | 主要问题 |
+|---|---|---|---|---|---|---|---|---|---|
 ${results.map(r =>
-    `| ${r.id} | ${r.city} | ${r.budget}/${r.days}天 | ${r.status} | ${r.rulePass ? '✅' : '❌'} | ${r.judgeScore ?? '-'} | ${r.dimensions ? JSON.stringify(r.dimensions) : '-'} | ${(r.issues ?? (r.error ? [r.error] : [])).join('；') || '-'} |`
+    `| ${r.id} | ${r.city} | ${r.budget}/${r.days}天 | ${r.status} | ${r.rulePass ? '✅' : '❌'} | ${r.tools ? `天气${r.tools.weatherCalls}/景点${r.tools.attractionSearches}${r.toolBudgetPass ? ' ✅' : ' ❌'}` : '-'} | ${r.durationSec}s | ${r.usage ? `${r.usage.inputTokens}+${r.usage.outputTokens}` : '-'} | ${r.judgeScore ?? '-'} | ${(r.issues ?? (r.error ? [r.error] : [])).join('；') || '-'} |`
 ).join('\n')}
 `
 
