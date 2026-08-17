@@ -1,0 +1,17 @@
+services:
+  backend:
+    build: ./travel-recomend-backend
+    env_file: ./travel-recomend-backend/.env
+    environment: { PORT: 3300, SESSIONS_FILE: /data/sessions.json }
+    volumes: [travel-data:/data]
+    expose: ["3300"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3300/heartbeat').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  frontend:
+    build: ./travel-recomend-front
+    ports: ["5173:80"]
+    depends_on: { backend: { condition: service_healthy } }
+volumes: { travel-data: {} }
