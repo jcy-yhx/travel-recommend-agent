@@ -171,8 +171,8 @@ class TravelService {
 
         // 行程草案写入会话状态：之后 chat 可以引用"用户刚才规划的行程"
         if (sessionId) {
-            stateManager.setTripPlan(sessionId, plan)
-            stateManager.recordUsage(sessionId, 'recommend', usage)
+            await stateManager.setTripPlan(sessionId, plan)
+            await stateManager.recordUsage(sessionId, 'recommend', usage)
         }
         return plan
     }
@@ -218,8 +218,8 @@ class TravelService {
             `，估算成本 ¥${usageWithCost.estimatedCost.toFixed(4)}`)
 
         if (sessionId) {
-            stateManager.setTripPlan(sessionId, plan)
-            stateManager.recordUsage(sessionId, 'recommend', usage)
+            await stateManager.setTripPlan(sessionId, plan)
+            await stateManager.recordUsage(sessionId, 'recommend', usage)
         }
         return { plan, usage: usageWithCost }
     }
@@ -230,7 +230,7 @@ class TravelService {
     // 与 Phase 06 validator 触发的 re-plan 对称：一个是规则触发（自动），
     // 一个是用户触发（交互），两者共用同一套图与收口逻辑。
     async refine(sessionId, instruction, onEvent) {
-        const session = stateManager.getSession(sessionId)
+        const session = await stateManager.getSession(sessionId)
         // 只有完整行程才能修改；Phase 11 前的旧会话只有概要 → 明确报错
         // （路由层已先校验返回 400，这里兜底 service 被直接调用的情况）
         if (!session?.tripPlan?.plan) {
@@ -253,8 +253,8 @@ class TravelService {
             `，估算成本 ¥${usageWithCost.estimatedCost.toFixed(4)}`)
 
         // 新行程覆盖旧行程（同一会话只保留最新一份行程）
-        stateManager.setTripPlan(sessionId, plan)
-        stateManager.recordUsage(sessionId, 'refine', usage)
+        await stateManager.setTripPlan(sessionId, plan)
+        await stateManager.recordUsage(sessionId, 'refine', usage)
         return { plan, usage: usageWithCost }
     }
 
@@ -356,7 +356,7 @@ ${SCHEMA_OUTPUT_INSTRUCTION}`)
 
     //流式对话（带会话状态：多轮记忆 + 行程草案上下文）
     async chat(sessionId, message, streamCallback) {
-        const session = stateManager.getSession(sessionId)
+        const session = await stateManager.getSession(sessionId)
 
         // 组装消息：系统提示（含行程草案上下文）+ 会话历史 + 本轮新消息
         const messages = [
@@ -384,8 +384,8 @@ ${SCHEMA_OUTPUT_INSTRUCTION}`)
             }
 
             // 本轮对话写回会话状态（成功才写，失败不污染历史）
-            stateManager.appendMessage(sessionId, 'user', message)
-            stateManager.appendMessage(sessionId, 'assistant', fullResponse)
+            await stateManager.appendMessage(sessionId, 'user', message)
+            await stateManager.appendMessage(sessionId, 'assistant', fullResponse)
 
             return {
                 success: true,

@@ -2,6 +2,8 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { estimateCost } from '../utils/tokenStats.js'
+import { createPool } from '../db/pool.js'
+import { PostgresStateManager } from './postgresStateManager.js'
 
 // 会话持久化文件：默认 data/sessions.json；SESSIONS_FILE 环境变量可覆盖
 // （API 测试用它指向临时文件，避免污染运行时数据）
@@ -24,6 +26,10 @@ export const MAX_HISTORY = 20
 //   真正落地需要用户画像与检索，属于面试后可做内容
 export class StateManager {
     constructor(filePath = DEFAULT_SESSIONS_FILE) {
+        if (process.env.DATABASE_URL) {
+            this.postgres = new PostgresStateManager(createPool())
+            return
+        }
         this.filePath = filePath
         this.sessions = new Map()
         this.loadFromDisk()
@@ -54,6 +60,7 @@ export class StateManager {
 
     // 取会话；不存在时创建。传入已有 sessionId 但服务端已重启丢失时，按新会话创建
     ensureSession(sessionId) {
+        if (this.postgres) return this.postgres.ensureSession(sessionId)
         if (sessionId && this.sessions.has(sessionId)) {
             return this.sessions.get(sessionId)
         }
@@ -71,10 +78,12 @@ export class StateManager {
     }
 
     getSession(sessionId) {
+        if (this.postgres) return this.postgres.getSession(sessionId)
         return this.sessions.get(sessionId) ?? null
     }
 
     appendMessage(sessionId, role, content) {
+        if (this.postgres) return this.postgres.appendMessage(sessionId, role, content)
         const session = this.sessions.get(sessionId)
         if (!session) return null
         session.history.push({ role, content, at: new Date().toISOString() })
@@ -91,6 +100,7 @@ export class StateManager {
     // refine 需要注入旧行程 JSON，detail 页恢复也不再重新生成。
     // 旧的只存摘要的会话（Phase 11 前）自然降级：refine 返回 400，detail 重新生成。
     setTripPlan(sessionId, plan) {
+        if (this.postgres) return this.postgres.setTripPlan(sessionId, plan)
         const session = this.sessions.get(sessionId)
         if (!session) return null
         session.tripPlan = {
@@ -107,6 +117,7 @@ export class StateManager {
 
     // 会话列表：元数据 + 最近一条用户消息预览，按最近更新排序（profile 页列表）
     listSessions() {
+        if (this.postgres) return this.postgres.listSessions()
         return [...this.sessions.values()]
             .map(session => {
                 const lastUser = [...(session.history ?? [])].reverse().find(m => m.role === 'user')
@@ -127,6 +138,7 @@ export class StateManager {
 
     // 删除会话（含持久化）；返回是否真实删除了一个会话
     deleteSession(sessionId) {
+        if (this.postgres) return this.postgres.deleteSession(sessionId)
         const existed = this.sessions.delete(sessionId)
         if (existed) this.persist()
         return existed
@@ -134,6 +146,7 @@ export class StateManager {
 
     // 记录一次 LLM 规划请求的 token 用量（成本观测，Phase 08/10）
     recordUsage(sessionId, kind, usage) {
+        if (this.postgres) return this.postgres.recordUsage(sessionId, kind, usage)
         const session = this.sessions.get(sessionId)
         if (!session) return null
         if (!session.usageLog) session.usageLog = []
@@ -149,6 +162,7 @@ export class StateManager {
 
     // 全局成本统计：聚合所有会话的 usageLog（纯内存读，不调 LLM）
     getStats() {
+        if (this.postgres) return this.postgres.getStats()
         let requestCount = 0
         let inputTokens = 0
         let outputTokens = 0

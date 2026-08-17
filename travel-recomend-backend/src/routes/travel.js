@@ -36,7 +36,7 @@ router.post('/recommend', asyncHandler(async (req, res) => {
     }
 
     // 会话：传了 sessionId 就把行程草案关联到该会话（chat 可引用）；没传就新建
-    const session = stateManager.ensureSession(params.sessionId)
+    const session = await stateManager.ensureSession(params.sessionId)
 
     // service 返回的就是通过 schema 校验的行程数据；
     // 校验重试耗尽仍失败时 service 抛异常，由全局错误中间件返回 500
@@ -57,7 +57,7 @@ router.post('/recommend/stream', asyncHandler(async (req, res) => {
         return res.status(400).json({ success: false, message: params.message })
     }
 
-    const session = stateManager.ensureSession(params.sessionId)
+    const session = await stateManager.ensureSession(params.sessionId)
     const responseStream = createResponseStream(res)
     try {
         responseStream.send({ type: 'start', city: params.city, budget: params.budget, days: params.days })
@@ -82,7 +82,7 @@ router.post('/recommend/stream', asyncHandler(async (req, res) => {
 router.get('/stats', asyncHandler(async (req, res) => {
     return res.json({
         success: true,
-        data: stateManager.getStats()
+        data: await stateManager.getStats()
     })
 }))
 
@@ -90,13 +90,13 @@ router.get('/stats', asyncHandler(async (req, res) => {
 router.get('/sessions', asyncHandler(async (req, res) => {
     return res.json({
         success: true,
-        data: stateManager.listSessions()
+        data: await stateManager.listSessions()
     })
 }))
 
 // 会话详情（Phase 11）：chat 恢复历史 / detail 恢复行程都从这里取
 router.get('/sessions/:id', asyncHandler(async (req, res) => {
-    const session = stateManager.getSession(req.params.id)
+    const session = await stateManager.getSession(req.params.id)
     if (!session) {
         return res.status(404).json({ success: false, message: '会话不存在' })
     }
@@ -108,7 +108,7 @@ router.get('/sessions/:id', asyncHandler(async (req, res) => {
 
 // 删除会话（Phase 11）：幂等语义——不存在的会话返回 404
 router.delete('/sessions/:id', asyncHandler(async (req, res) => {
-    const existed = stateManager.deleteSession(req.params.id)
+    const existed = await stateManager.deleteSession(req.params.id)
     if (!existed) {
         return res.status(404).json({ success: false, message: '会话不存在' })
     }
@@ -128,7 +128,7 @@ router.post('/refine', asyncHandler(async (req, res) => {
 
     // 无完整行程 → 400：参数校验放在 HTTP 边界（与 validatePlanParams 同一层）。
     // 旧会话（Phase 11 前只存概要）也走这里——客户端据此提示"先规划一次"
-    const session = stateManager.getSession(sessionId)
+    const session = await stateManager.getSession(sessionId)
     if (!session?.tripPlan?.plan) {
         return res.status(400).json({ success: false, message: '该会话没有可修改的行程（请先规划一次）' })
     }
@@ -165,7 +165,7 @@ router.post('/chat', asyncHandler(async (req, res) => {
     }
 
     // 会话：不存在则创建；客户端用 done 事件里的 sessionId 记住它
-    const session = stateManager.ensureSession(sessionId)
+    const session = await stateManager.ensureSession(sessionId)
 
     // sse 流式接口返回处理
     // 事件协议：chunk（增量文本）/ done（正常结束，携带 sessionId）/ error（异常结束）
