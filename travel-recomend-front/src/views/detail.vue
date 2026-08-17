@@ -6,11 +6,6 @@
         <div class="page-content">
             <!-- 生成/修改过程：Agent 执行轨迹实时可见（面试展示主场景） -->
             <TracePanel v-if="traceRunning || traceEvents.length" :events="traceEvents" :running="traceRunning" />
-            <div v-if="traceRunning && !traceEvents.length && !tripData" class="loading-container">
-                <van-loading size="48px" type="spinner">
-                    正在启动 Agent...
-                </van-loading>
-            </div>
             <!-- 错误卡片独立 v-if（不挂在 v-else-if 链上）：
                  修改行程失败时旧行程仍可看，错误在上方提示 -->
             <div v-if="errMessage" class="error-container">
@@ -83,7 +78,7 @@
                 <!-- 本次请求成本（后端真实统计） -->
                 <div v-if="usage" class="card usage-card">
                     <div class="section-title">本次请求成本</div>
-                    <div class="usage-line">Token：输入 {{ usage.inputTokens }} + 输出 {{ usage.outputTokens }}，估算成本 ¥{{ usage.estimatedCost.toFixed(4) }}</div>
+                    <div class="usage-line">Token：输入 {{ usage.inputTokens }} + 输出 {{ usage.outputTokens }}，估算成本 ¥{{ (usage.estimatedCost ?? 0).toFixed(4) }}</div>
                 </div>
             </template>
         </div>
@@ -179,7 +174,7 @@
     interface TraceEvent { type: 'node'; seq: number; node: string; data: Record<string, any> }
     const traceEvents = ref<TraceEvent[]>([])
     const traceRunning = ref(false)
-    const usage = ref<{ inputTokens: number; outputTokens: number; estimatedCost: number } | null>(null)
+    const usage = ref<{ inputTokens: number; outputTokens: number; estimatedCost?: number } | null>(null)
 
     // 会话 ID：localStorage 与 URL（?sessionId）共用一套，
     // 规划/修改都携带它，行程才会关联到同一个会话
@@ -217,6 +212,9 @@
                 if (event.type === 'node') {
                     traceEvents.value.push(event as TraceEvent)
                 } else if (event.type === 'done') {
+                    // done 表示后端图已完成。不要等待 fetch 的 SSE 连接完全关闭，
+                    // 否则浏览器仍在收尾流时 TracePanel 会一直显示“Agent 思考中”。
+                    traceRunning.value = false
                     tripData.value = event.plan
                     usage.value = event.usage ?? null
                     if (event.sessionId) {
@@ -225,6 +223,7 @@
                     }
                     traceEvents.value = []
                 } else if (event.type === 'error') {
+                    traceRunning.value = false
                     throw new Error(event.message || '规划失败')
                 }
             })
@@ -265,10 +264,13 @@
                 if (event.type === 'node') {
                     traceEvents.value.push(event as TraceEvent)
                 } else if (event.type === 'done') {
+                    // 与首次规划一致：收到业务完成事件立即收起思考状态。
+                    traceRunning.value = false
                     tripData.value = event.plan
                     usage.value = event.usage ?? null
                     traceEvents.value = []
                 } else if (event.type === 'error') {
+                    traceRunning.value = false
                     throw new Error(event.message || '修改失败')
                 }
             })
@@ -338,7 +340,8 @@
     .page-container {
         min-height: 100vh;
         background-color: #f5f5f5;
-        padding-bottom: 70px;
+        /* 为详情操作栏（约 64px）和全局 Tabbar（50px）预留空间 */
+        padding-bottom: 130px;
     }
     .card {
         background-color: #fff;
@@ -464,7 +467,8 @@
 
     .detail-footer {
     position: fixed;
-    bottom: 0;
+    /* App.vue 的全局 Tabbar 固定在底部，操作栏需位于其上方 */
+    bottom: 50px;
     left: 0;
     right: 0;
     display: flex;
